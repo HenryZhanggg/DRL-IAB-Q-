@@ -107,7 +107,8 @@ class Environment:
         if done:
             reward += 10
         print(
-            f"Step: Action taken at ({x}, {y}). Coverage: {len(self.covered_areas)}/{self.total_area} ({len(self.covered_areas) / self.total_area * 100:.2f}%)")
+            f"Step: Deployed camera at ({x}, {y}). Total cameras deployed: {len(self.deployed_cameras)}. Reward: {reward},Coverage: {len(self.covered_areas)}/{self.total_area} ({len(self.covered_areas) / self.total_area * 100:.2f}%)")
+
         return self.state.flatten(), reward, done
 
 class Agent:
@@ -190,6 +191,7 @@ for episode in range(max_episodes):
     if step_count % 100 == 0:
         print(f"  Episode {episode + 1}, Step {step_count}, Reward: {reward}")
     epi_loss.append(episode_loss)
+    epi_rewards.append(episode_reward)
     print(f"Episode {episode + 1} completed with loss: {episode_loss}")
 
 # Plot training loss
@@ -200,6 +202,7 @@ plt.ylabel('Loss')
 plt.title('Training Loss Over Episodes')
 plt.legend()
 plt.show()
+
 plt.figure(figsize=(10, 6))
 plt.plot(range(max_episodes), epi_rewards, label='Total Reward per Episode')
 plt.xlabel('Episodes')
