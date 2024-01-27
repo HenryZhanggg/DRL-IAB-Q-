@@ -3,6 +3,8 @@ import torch.nn as nn
 import torch.optim as optim
 import gym
 import numpy as np
+import math
+import random
 from gym import spaces
 import matplotlib.pyplot as plt
 
@@ -104,8 +106,8 @@ class NetworkDeploymentEnv(gym.Env):
 
     def calculate_reward(self):
         covered_grids = self.calculate_coverage()
-        penalty_uncovered = 0.1 * (self.grid_size * self.grid_size - len(covered_grids))
-        penalty_node_deployment = 0.01 * np.sum(self.state["D"])
+        penalty_uncovered = 0.5 * (self.grid_size * self.grid_size - len(covered_grids))
+        penalty_node_deployment = 0.005 * np.sum(self.state["D"])
         return -penalty_uncovered - penalty_node_deployment
 
     def calculate_coverage(self):
@@ -158,7 +160,7 @@ class NetworkDeploymentEnv(gym.Env):
         x2, y2 = self.get_node_position(node_index2)
         return np.sqrt((x1 - x2)**2 + (y1 - y2)**2)
 
-def train_actor_critic(env, actor, critic, episodes, actor_lr=0.0001, critic_lr=0.0001, gamma=0.99):
+def train_actor_critic(env, actor, critic, episodes, actor_lr=0.001, critic_lr=0.001, gamma=0.99):
     actor_optimizer = optim.Adam(actor.parameters(), lr=actor_lr)
     critic_optimizer = optim.Adam(critic.parameters(), lr=critic_lr)
     episode_rewards = []
@@ -173,13 +175,14 @@ def train_actor_critic(env, actor, critic, episodes, actor_lr=0.0001, critic_lr=
 
         while not done:
             state_tensor = torch.FloatTensor(state).unsqueeze(0)
-            action_probs = actor(state_tensor)
-            if torch.isnan(action_probs).any():
-                print("NaN detected in action probabilities")
-                break
-
-            action_dist = torch.distributions.Bernoulli(action_probs)
-            action = action_dist.sample().numpy().astype(int)
+            epsilon = epsilon_end + (epsilon_start - epsilon_end) * math.exp(-1. * episode / epsilon_decay)
+            if random.random() > epsilon:
+                action_probs = actor(state_tensor)
+                action = torch.distributions.Bernoulli(action_probs).sample().numpy().astype(int)
+                use_model = True
+            else:
+                action = np.random.randint(0, 2, env.action_space.shape)
+                use_model = False
 
             next_state, reward, done, _ = env.step(action.flatten())
             next_state_flattened = np.concatenate(
@@ -197,15 +200,15 @@ def train_actor_critic(env, actor, critic, episodes, actor_lr=0.0001, critic_lr=
             torch.nn.utils.clip_grad_norm_(critic.parameters(), max_norm=1.0)
             critic_optimizer.step()
 
-            if isinstance(action, np.ndarray):
-                action = torch.from_numpy(action).float()
-
-            actor_loss = -torch.sum(
-                torch.log(action_probs) * action + torch.log(1 - action_probs) * (1 - action)) * td_error.detach()
-            actor_optimizer.zero_grad()
-            actor_loss.backward()
-            torch.nn.utils.clip_grad_norm_(actor.parameters(), max_norm=1.0)
-            actor_optimizer.step()
+            if use_model:
+                if isinstance(action, np.ndarray):
+                    action = torch.from_numpy(action).float()
+                actor_loss = -torch.sum(
+                    torch.log(action_probs) * action + torch.log(1 - action_probs) * (1 - action)) * td_error.detach()
+                actor_optimizer.zero_grad()
+                actor_loss.backward()
+                torch.nn.utils.clip_grad_norm_(actor.parameters(), max_norm=1.0)
+                actor_optimizer.step()
 
             state = next_state_flattened
             total_reward += reward
@@ -217,9 +220,14 @@ def train_actor_critic(env, actor, critic, episodes, actor_lr=0.0001, critic_lr=
         coverage_percentage = len(env.calculate_coverage()) / (env.grid_size * env.grid_size) * 100
         episode_coverages.append(coverage_percentage)
         print(f"Episode {episode} finished. Total Reward: {total_reward}, Coverage: {coverage_percentage:.2f}%, Deployment: {np.sum(next_state['D'])}")
-        return episode_rewards, episode_losses, episode_coverages
+
+    return episode_rewards, episode_losses, episode_coverages
+
 
 # Main Execution
+epsilon_start = 0.9
+epsilon_end = 0.05
+epsilon_decay = 500
 env = NetworkDeploymentEnv()
 state_dim = len(env.reset())
 action_dim = env.action_space.n
