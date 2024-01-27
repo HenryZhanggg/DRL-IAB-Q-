@@ -158,7 +158,7 @@ class NetworkDeploymentEnv(gym.Env):
         x2, y2 = self.get_node_position(node_index2)
         return np.sqrt((x1 - x2)**2 + (y1 - y2)**2)
 
-def train_actor_critic(env, actor, critic, episodes, actor_lr=0.001, critic_lr=0.001, gamma=0.99):
+def train_actor_critic(env, actor, critic, episodes, actor_lr=0.0001, critic_lr=0.0001, gamma=0.99):
     actor_optimizer = optim.Adam(actor.parameters(), lr=actor_lr)
     critic_optimizer = optim.Adam(critic.parameters(), lr=critic_lr)
     episode_rewards = []
@@ -174,11 +174,16 @@ def train_actor_critic(env, actor, critic, episodes, actor_lr=0.001, critic_lr=0
         while not done:
             state_tensor = torch.FloatTensor(state).unsqueeze(0)
             action_probs = actor(state_tensor)
+            if torch.isnan(action_probs).any():
+                print("NaN detected in action probabilities")
+                break
+
             action_dist = torch.distributions.Bernoulli(action_probs)
             action = action_dist.sample().numpy().astype(int)
 
             next_state, reward, done, _ = env.step(action.flatten())
-            next_state_flattened = np.concatenate([next_state["D"].flatten(), next_state["R"].flatten(), next_state["N"].flatten()])
+            next_state_flattened = np.concatenate(
+                [next_state["D"].flatten(), next_state["R"].flatten(), next_state["N"].flatten()])
 
             value = critic(state_tensor)
             next_state_tensor = torch.FloatTensor(next_state_flattened).unsqueeze(0)
@@ -189,14 +194,17 @@ def train_actor_critic(env, actor, critic, episodes, actor_lr=0.001, critic_lr=0
             critic_loss = td_error.pow(2)
             critic_optimizer.zero_grad()
             critic_loss.backward()
+            torch.nn.utils.clip_grad_norm_(critic.parameters(), max_norm=1.0)
             critic_optimizer.step()
 
             if isinstance(action, np.ndarray):
                 action = torch.from_numpy(action).float()
 
-            actor_loss = -torch.sum(torch.log(action_probs) * action + torch.log(1 - action_probs) * (1 - action)) * td_error.detach()
+            actor_loss = -torch.sum(
+                torch.log(action_probs) * action + torch.log(1 - action_probs) * (1 - action)) * td_error.detach()
             actor_optimizer.zero_grad()
             actor_loss.backward()
+            torch.nn.utils.clip_grad_norm_(actor.parameters(), max_norm=1.0)
             actor_optimizer.step()
 
             state = next_state_flattened
@@ -206,35 +214,10 @@ def train_actor_critic(env, actor, critic, episodes, actor_lr=0.001, critic_lr=0
         episode_rewards.append(total_reward)
         episode_losses.append(np.mean(episode_loss))
 
-        # Calculate and store coverage percentage
         coverage_percentage = len(env.calculate_coverage()) / (env.grid_size * env.grid_size) * 100
         episode_coverages.append(coverage_percentage)
-        print(
-            f"Episode {episode} finished. Total Reward: {total_reward}, Coverage: {coverage_percentage:.2f}%, Deployment: {np.sum(next_state['D'])}")
-    # Plotting
-    plt.figure(figsize=(18, 5))
-
-    plt.subplot(1, 3, 1)
-    plt.plot(episode_rewards)
-    plt.title("Episode vs Rewards")
-    plt.xlabel("Episode")
-    plt.ylabel("Rewards")
-    plt.savefig('Episode vs Rewards')
-
-    plt.subplot(1, 3, 2)
-    plt.plot(episode_losses)
-    plt.title("Episode vs Loss")
-    plt.xlabel("Episode")
-    plt.ylabel("Loss")
-    plt.savefig("Episode vs Loss")
-
-    plt.subplot(1, 3, 3)
-    plt.plot(episode_coverages)
-    plt.title("Episode vs Coverage Percentage")
-    plt.xlabel("Episode")
-    plt.ylabel("Coverage (%)")
-    plt.savefig("Episode vs Coverage Percentage")
-    plt.show()
+        print(f"Episode {episode} finished. Total Reward: {total_reward}, Coverage: {coverage_percentage:.2f}%, Deployment: {np.sum(next_state['D'])}")
+        return episode_rewards, episode_losses, episode_coverages
 
 # Main Execution
 env = NetworkDeploymentEnv()
@@ -243,4 +226,27 @@ action_dim = env.action_space.n
 
 actor = Actor(state_dim, action_dim)
 critic = Critic(state_dim)
-train_actor_critic(env, actor, critic, episodes=2000)
+
+episode_rewards, episode_losses, episode_coverages = train_actor_critic(env, actor, critic, episodes=2000)
+
+# Plotting
+plt.figure(figsize=(18, 5))
+plt.subplot(1, 3, 1)
+plt.plot(episode_rewards)
+plt.title("Episode vs Rewards")
+plt.xlabel("Episode")
+plt.ylabel("Rewards")
+plt.savefig('Episode vs Rewards')
+plt.subplot(1, 3, 2)
+plt.plot(episode_losses)
+plt.title("Episode vs Loss")
+plt.xlabel("Episode")
+plt.ylabel("Loss")
+plt.savefig("Episode vs Loss")
+plt.subplot(1, 3, 3)
+plt.plot(episode_coverages)
+plt.title("Episode vs Coverage Percentage")
+plt.xlabel("Episode")
+plt.ylabel("Coverage (%)")
+plt.savefig("Episode vs Coverage Percentage")
+plt.show()
