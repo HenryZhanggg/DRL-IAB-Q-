@@ -1,337 +1,236 @@
-import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import torch.optim as optim
-import matplotlib.pyplot as plt
 import random
-import concurrent.futures
-
-# Grid and network parameters
-grid_size = 1000
-node_radius = 200
-backhaul_radius = 300
-interval = 50
-state_size = grid_size * grid_size
-lambda_values = [0.3, 0.5, 0.8, 1.5, 2, 3]  # Combined lambda values
-action_size = len(lambda_values)
-hidden_size = 128
-learning_rate = 0.01
-mu_e = 0.5
-epsilon = 0.1
-max_episodes = 100
-total_area = grid_size * grid_size
-gamma = 0.99
-data_rate_donor = 20
-communication_overhead = 1.2
-MAX_DONORS = 10
-fixed_node_data_rate = 0.000005
+from collections import deque
+import gym
+import numpy as np
+from gym import spaces
+import matplotlib.pyplot as plt
 
 class DQN(nn.Module):
-    def __init__(self, n_observations, n_actions):
+    def __init__(self, input_dim, output_dim):
         super(DQN, self).__init__()
-        self.layer1 = nn.Linear(state_size + action_size, 256)
-        self.layer2 = nn.Linear(256, 256)
-        self.layer3 = nn.Linear(256, 128)
-        self.layer4 = nn.Linear(128, n_actions)
+        self.net = nn.Sequential(
+            nn.Linear(input_dim, 128),
+            nn.ReLU(),
+            nn.Linear(128, 64),
+            nn.ReLU(),
+            nn.Linear(64, output_dim)
+        )
 
     def forward(self, x):
-        x = F.relu(self.layer1(x))
-        x = F.relu(self.layer2(x))
-        x = F.relu(self.layer3(x))
-        return self.layer4(x)
+        return self.net(x)
 
-class Environment:
-    def __init__(self, grid_size, node_radius, total_area):
-        self.grid_size = grid_size
-        self.node_radius = node_radius
-        self.total_area = total_area
-        self.state = np.zeros((self.grid_size, self.grid_size), dtype=int)
-        self.covered_areas = set()
-        self.deployed_nodes = set()
-        self.search_area = set()
-        self.donor_data_rate = data_rate_donor
-        self.node_data_rates = {}
-        self.connection_matrix = np.zeros((grid_size, grid_size), dtype=int)
+def train_dqn(env, model, episodes, learning_rate=0.001, gamma=0.99, epsilon_start=1.0, epsilon_end=0.01, epsilon_decay=0.995, batch_size=64):
+    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+    replay_buffer = deque(maxlen=10000)
+    epsilon = epsilon_start
+    losses = []
+    episode_rewards = []
+
+    for episode in range(episodes):
+        state = env.reset()
+        total_reward = 0
+        done = False
+        step_counter = 0  # Initialize step counter for each episode
+
+        while not done and step_counter < 100:  # Add condition for maximum steps
+            if random.random() < epsilon:
+                action = env.action_space.sample()
+            else:
+                with torch.no_grad():
+                    state_tensor = torch.FloatTensor(state).unsqueeze(0)
+                    action = model(state_tensor).argmax().item()
+            next_state, reward, done, _ = env.step(action)
+            replay_buffer.append((state, action, reward, next_state, done))
+            state = next_state
+            total_reward += reward
+            step_counter += 1  # Increment step counter
+
+            if len(replay_buffer) > batch_size:
+                batch = random.sample(replay_buffer, batch_size)
+                states, actions, rewards, next_states, dones = zip(*batch)
+
+                states = torch.FloatTensor(states)
+                actions = torch.LongTensor(actions)
+                rewards = torch.FloatTensor(rewards)
+                next_states = torch.FloatTensor(next_states)
+                dones = torch.FloatTensor(dones)
+
+                q_values = model(states).gather(1, actions.unsqueeze(1)).squeeze(1)
+                next_q_values = model(next_states).max(1)[0]
+                expected_q_values = rewards + gamma * next_q_values * (1 - dones)
+
+                loss = nn.MSELoss()(q_values, expected_q_values.detach())
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+                losses.append(loss.item())
+
+            epsilon = max(epsilon_end, epsilon_decay * epsilon)
+
+        episode_rewards.append(total_reward)
+        print(f"Episode: {episode}, Steps: {step_counter}, Total Deployed Nodes: {env.total_deployed_nodes()}, Reward: {total_reward}, Loss: {loss.item() if losses else 'N/A'}")
+
+    # Plotting the training loss over episodes
+    plt.figure(figsize=(10, 6))
+    plt.plot(losses, label='Training Loss')
+    plt.xlabel('Episode')
+    plt.ylabel('Loss')
+    plt.title('Training Loss Over Episodes')
+    plt.legend()
+    plt.show()
+
+    return losses, episode_rewards
+
+class NetworkDeploymentEnv(gym.Env):
+    def __init__(self):
+        super(NetworkDeploymentEnv, self).__init__()
+        self.grid_size = 1000
+        self.node_spacing = 50
+        self.n_potential_nodes = (self.grid_size // self.node_spacing) ** 2
+        self.action_space = spaces.MultiBinary(2 * self.n_potential_nodes)
+        self.observation_space = spaces.Dict({
+            "D": spaces.MultiBinary(self.n_potential_nodes),
+            "R": spaces.Box(low=0, high=20, shape=(self.n_potential_nodes,)),
+            "N": spaces.MultiBinary((self.n_potential_nodes, self.n_potential_nodes))
+        })
+        self.overhead = 1.2
+        self.node_data_rate = 0.2  # 0.2 Gbps
+        self.donor_data_rate = 15  # 15 Gbps
+        self.coverage_radius = 200
+        self.backhaul_radius = 300
+        self.current_step = 0
+        self.reset()
+
+    def step(self, action):
+        rewards = 0
+        #print(f"Step {self.current_step + 1}:")
+        for i in range(self.n_potential_nodes):
+            action_type = "Deploy" if action[i] == 1 else "Remove"
+            if action[i] == 1 and self.state["D"][i] == 0:
+                # Attempt to deploy a node
+                self.state["D"][i] = 1  # Temporarily update "D" state
+                if self.can_provide_service(i):
+                    self.update_connections()
+                    self.update_network_data_rate()
+                    #print(f"  {action_type} node at position {i}. Success. Updated connections.")
+                else:
+                    rewards -= 10  # Large penalty for attempting to deploy without service
+                    #print(f"  {action_type} node at position {i}. Failed. No service provided.")
+            elif action[i] == 0 and self.state["D"][i] == 1:
+                # Attempt to remove a node
+                self.state["D"][i] = 0
+                self.update_connections()
+                self.update_network_data_rate()
+                #print(f"  {action_type} node at position {i}. Node removed. Updated connections.")
+
+        reward = self.calculate_reward() + rewards
+        self.current_step += 1
+        done = self.current_step >= 100
+
+        # Print connection matrix after each action
+        print("  Connection Matrix:")
+        print(self.state["N"])
+        return self._get_flattened_state(), reward, done, {}
 
     def reset(self):
-        self.state.fill(0)
-        self.covered_areas.clear()
-        self.deployed_nodes.clear()
-        self.search_area.clear()
-        self.donor_data_rate = data_rate_donor
-        self.node_data_rates.clear()
-        self.connection_matrix.fill(0)
-        self.initialize_potential_locations()
-        for _ in range(MAX_DONORS):
-            self.deploy_random_donor()
-        return self.state.flatten()
+        self.state = {
+            "D": np.zeros(self.n_potential_nodes),
+            "R": np.zeros(self.n_potential_nodes),
+            "N": np.zeros((self.n_potential_nodes, self.n_potential_nodes))
+        }
+        # Randomly choose 10 donor locations
+        donor_indices = np.random.choice(range(self.n_potential_nodes), 10, replace=False)
+        for idx in donor_indices:
+            self.state["D"][idx] = 1
+        self.update_connections()
+        self.update_network_data_rate()
+        return self._get_flattened_state()
 
-    def initialize_potential_locations(self):
-        for x in range(0, self.grid_size, interval):
-            for y in range(0, self.grid_size, interval):
-                self.search_area.add((x, y))
+    def _get_flattened_state(self):
+        # Flatten the state components into a single array
+        D_flat = self.state["D"].flatten()
+        R_flat = self.state["R"].flatten()
+        N_flat = self.state["N"].flatten()
+        flattened_state = np.concatenate([D_flat, R_flat, N_flat])
+        return flattened_state
 
-    def deploy_random_donor(self):
-        x = random.choice(range(0, self.grid_size, interval))
-        y = random.choice(range(0, self.grid_size, interval))
-        self.deploy_donor(x, y)
-        #center_x, center_y = self.grid_size // 2, self.grid_size // 2
-        #self.deploy_donor(center_x, center_y)
+    def render(self, mode='human'):
+        pass
 
-    def get_node_data_rates(self):
-        return self.node_data_rates
+    def total_deployed_nodes(self):
+        return np.sum(self.state["D"])
 
-    def get_deployed_nodes(self):
-        return self.deployed_nodes
+    def calculate_reward(self):
+        alpha = 10
+        beta = 0.01
 
-    def deploy_donor(self, x, y):
-        self.state[x, y] = 1
-        self.covered_areas.add((x, y))
-        self.deployed_nodes.add((x, y))
-        self.node_data_rates[(x, y)] = self.donor_data_rate
-        self.update_potential_locations(x, y)
+        total_area = self.grid_size * self.grid_size
+        covered_area = len(self.calculate_coverage())
+        uncovered_area = total_area - covered_area
 
-    def deploy_node(self, x, y):
-        if not self.is_within_backhaul_radius(x, y):
-            return False
-        if (x, y) in self.deployed_nodes:
-            return False
-        if (x, y) not in self.search_area:
-            return False
-        new_coverage = self.calculate_new_coverage(x, y)
-        node_data_rate_consumption = fixed_node_data_rate * new_coverage
-        updated_data_rate = self.donor_data_rate - node_data_rate_consumption
-        if updated_data_rate < 0:
-            return False
-        for dx in range(-self.node_radius, self.node_radius + 1):
-            for dy in range(-self.node_radius, self.node_radius + 1):
-                nx, ny = x + dx, y + dy
-                if 0 <= nx < self.grid_size and 0 <= ny < self.grid_size:
-                    self.state[nx, ny] = 1
-                    self.covered_areas.add((nx, ny))
-        self.deployed_nodes.add((x, y))
-        self.node_data_rates[(x, y)] = updated_data_rate
-        self.update_data_rates(x, y, node_data_rate_consumption)
-        self.update_potential_locations(x, y)
-        return True
+        uncovered_area_penalty = (uncovered_area / total_area) * alpha
 
-    def update_data_rates(self, x, y, node_data_rate_consumption):
-        # Decrease the data rate of the donor if the new node is within its radius
-        if self.is_within_backhaul_radius(x, y):
-            self.donor_data_rate -= node_data_rate_consumption * communication_overhead
-        # Decrease the data rates for all other connected nodes within node_radius
-        for nx, ny in self.deployed_nodes:
-            if self.is_within_radius(x, y, nx, ny) and (nx, ny) != (x, y):  # Exclude the newly deployed node
-                self.node_data_rates[(nx, ny)] -= node_data_rate_consumption * communication_overhead
+        deployment_penalty = beta * np.sum(self.state["D"])
 
-    def is_within_backhaul_radius(self, x, y):
-        for nx, ny in self.deployed_nodes:
-            if np.sqrt((x - nx) ** 2 + (y - ny) ** 2) <= backhaul_radius:
-                return True
+        reward = -uncovered_area_penalty - deployment_penalty
+        return reward
+
+    def calculate_coverage(self):
+        covered_grids = set()
+        for i in range(self.n_potential_nodes):
+            if self.state["D"][i] == 1:
+                node_x, node_y = self.get_node_position(i)
+                for x in range(node_x - self.coverage_radius, node_x + self.coverage_radius + 1):
+                    for y in range(node_y - self.coverage_radius, node_y + self.coverage_radius + 1):
+                        if 0 <= x < self.grid_size and 0 <= y < self.grid_size:
+                            covered_grids.add((x, y))
+        return covered_grids
+
+    def get_node_position(self, node_index):
+        row = node_index // (self.grid_size // self.node_spacing)
+        col = node_index % (self.grid_size // self.node_spacing)
+        x = col * self.node_spacing
+        y = row * self.node_spacing
+        return x, y
+
+    def can_provide_service(self, node_index):
+        node_x, node_y = self.get_node_position(node_index)
+        for i in range(self.n_potential_nodes):
+            if self.state["D"][i] == 1:
+                donor_x, donor_y = self.get_node_position(i)
+                distance = np.sqrt((node_x - donor_x) ** 2 + (node_y - donor_y) ** 2)
+                if distance <= self.backhaul_radius and self.state["R"][i] >= self.node_data_rate * self.overhead:
+                    return True
         return False
 
-    def is_within_radius(self, x1, y1, x2, y2):
-        return np.sqrt((x1 - x2) ** 2 + (y1 - y2) ** 2) <= self.node_radius
+    def update_connections(self):
+        for i in range(self.n_potential_nodes):
+            for j in range(self.n_potential_nodes):
+                if i != j and self.state["D"][i] == 1:
+                    distance = self.calculate_distance(i, j)
+                    if distance <= self.backhaul_radius and self.state["R"][i] >= self.node_data_rate * self.overhead:
+                        self.state["N"][i][j] = 1
+                    else:
+                        self.state["N"][i][j] = 0
 
-    def update_search_area(self):
-        self.search_area.clear()
-        for node in self.deployed_nodes:
-            x, y = node
-            for dx in range(-backhaul_radius, backhaul_radius, interval):
-                for dy in range(-backhaul_radius, backhaul_radius, interval):
-                    mx, my = x + dx, y + dy
-                    if 0 <= mx < self.grid_size and 0 <= my < self.grid_size:
-                        distance = np.sqrt((x - mx) ** 2 + (y - my) ** 2)
-                        if distance <= backhaul_radius:
-                            self.search_area.add((mx, my))
+    def update_network_data_rate(self):
+        for i in range(self.n_potential_nodes):
+            if self.state["D"][i] == 1:
+                connected_nodes = [j for j in range(self.n_potential_nodes) if self.state["N"][i][j] == 1]
+                total_data_rate_consumption = sum(self.node_data_rate * self.overhead for j in connected_nodes)
+                self.state["R"][i] = max(0, self.donor_data_rate - total_data_rate_consumption)
 
-    def update_potential_locations(self, x, y):
-        for dx in range(-backhaul_radius, backhaul_radius + 1, interval):
-            for dy in range(-backhaul_radius, backhaul_radius + 1, interval):
-                mx, my = x + dx, y + dy
-                if 0 <= mx < self.grid_size and 0 <= my < self.grid_size:
-                    self.search_area.add((mx, my))
+    def calculate_distance(self, node_index1, node_index2):
+        x1, y1 = self.get_node_position(node_index1)
+        x2, y2 = self.get_node_position(node_index2)
+        return np.sqrt((x1 - x2)**2 + (y1 - y2)**2)
 
-    def step(self, agent, action):
-        best_location = None
-        best_value = 0
-        print(best_value)
-        # 更新 search_area
-        self.update_search_area()
-        # 选择动作
-        lambda_val = action
-        # 在 search_area 中找到最佳部署位置
-        for potential_location in self.search_area:
-            if potential_location not in self.deployed_nodes:
-                x, y = potential_location
-                new_coverage = self.calculate_new_coverage(x, y)
-                node_data_rate_consumption = fixed_node_data_rate * new_coverage
-                data_rate_left = self.donor_data_rate - node_data_rate_consumption
-                if data_rate_left > 0:
-                    value = new_coverage / (data_rate_left ** lambda_val)
-                    print(value)
-                    if value > best_value:
-                        print("2")
-                        best_value = value
-                        best_location = (x, y)
-        # 部署节点
-        node_deployed = False
-        if best_location is not None:
-            node_deployed = self.deploy_node(*best_location)
+env = NetworkDeploymentEnv()
+state_dim = len(env.reset())  # Get the size of the flattened state
+action_dim = env.action_space.n
+dqn_model = DQN(state_dim, action_dim)
+losses = train_dqn(env, dqn_model, episodes=1000)
 
-        # 检查是否满足覆盖要求
-        coverage_requirement_met = len(self.covered_areas) >= 0.99 * self.total_area
-        if coverage_requirement_met:
-            reward = 100
-            done = True
-        else:
-            reward = -1 * len(self.deployed_nodes) if node_deployed else 0
-            done = False
-
-        print(f"Step completed. Node deployed: {node_deployed}, Done: {done}")
-        return self.state.flatten(), reward, done
-
-    def calculate_new_coverage(self, x, y):
-        args_list = [(x, y, dx, dy) for dx in range(-self.node_radius, self.node_radius + 1)
-                     for dy in range(-self.node_radius, self.node_radius + 1)]
-
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            results = executor.map(self.calculate_coverage_for_point, args_list)
-            new_coverage = sum(results)
-
-        return new_coverage
-
-    def calculate_coverage_for_point(self, args):
-        x, y, dx, dy = args
-        nx, ny = x + dx, y + dy
-        if 0 <= nx < self.grid_size and 0 <= ny < self.grid_size and self.state[nx, ny] == 0:
-            return 1
-        return 0
-
-class Agent:
-    def __init__(self, state_size, action_size, learning_rate, gamma, mu_e, initial_epsilon, epsilon_decay, min_epsilon):
-        self.model = DQN(state_size, action_size)
-        self.optimizer = optim.Adam(self.model.parameters(), lr=learning_rate)
-        self.gamma = gamma
-        self.mu_e = mu_e
-        self.epsilon = initial_epsilon
-        self.epsilon_decay = epsilon_decay
-        self.min_epsilon = min_epsilon
-        self.e = {name: torch.zeros_like(param) for name, param in self.model.named_parameters()}
-
-    def decay_epsilon(self):
-        self.epsilon = max(self.min_epsilon, self.epsilon * self.epsilon_decay)
-
-    def select_action(self, state):
-        # Reshape state to [1, state_size]
-        state_tensor = torch.FloatTensor(state).unsqueeze(0)
-
-        # Generate a random action for exploration
-        random_action = np.random.randint(0, action_size)
-        action_tensor = torch.zeros((1, action_size))
-        action_tensor[0, random_action] = 1
-
-        # Concatenate state and action tensors
-        combined_input = torch.cat((state_tensor, action_tensor), dim=1)
-
-        # Forward pass through the network
-        q_values = self.model(combined_input)
-
-        # Epsilon-greedy policy
-        if np.random.rand() > self.epsilon:
-            selected_action = q_values.max(1)[1].item()
-        else:
-            selected_action = random_action
-        return selected_action, action_tensor
-
-    def update(self, state, action, action_tensor, reward, next_state, done, step_counter):
-        state_tensor = torch.FloatTensor(state).unsqueeze(0)
-        next_state_tensor = torch.FloatTensor(next_state).unsqueeze(0)
-        combined_input = torch.cat((state_tensor, action_tensor), dim=1)
-        next_combined_input = torch.cat((next_state_tensor, torch.zeros_like(action_tensor)), dim=1)
-        # Get the current Q values and the Q values for the next state
-        try:
-            current_q_values = self.model(combined_input)
-            next_q_values = self.model(next_combined_input).detach()
-        except Exception as e:
-            raise
-        # Select the Q value for the taken action
-        current_q_value = current_q_values[0, action]
-        # Compute the TD target
-        max_next_q_value = next_q_values.max(1)[0]
-        td_target = reward + (self.gamma * max_next_q_value * (not done))
-        # Compute the TD error
-        td_error = td_target - current_q_value
-        # Backpropagate the error
-        self.optimizer.zero_grad()
-        td_error.backward()
-        # Update the eligibility trace and the weights
-        for name, param in self.model.named_parameters():
-            if param.grad is not None:
-                self.e[name] = self.mu_e * self.gamma * self.e[name] + param.grad
-                param.data += learning_rate * td_error.detach() * self.e[name]
-        # Reset if maximum steps reached
-        if step_counter >= 100:
-            for name, param in self.model.named_parameters():
-                param.data += learning_rate * self.e[name]
-            self.reset_eligibility_trace()
-            return True
-        return False
-
-    def reset_eligibility_trace(self):
-        for name in self.e:
-            self.e[name] = torch.zeros_like(self.e[name])
-
-initial_epsilon = 1.0  # Start with a high epsilon value for more exploration
-epsilon_decay = 0.995  # Exponential decay rate
-min_epsilon = 0.01     # Minimum epsilon value
-agent = Agent(state_size, action_size, learning_rate, gamma, mu_e, initial_epsilon, epsilon_decay, min_epsilon)
-env = Environment(grid_size, node_radius, total_area)
-epi_loss = []
-epi_rewards = []
-
-for episode in range(max_episodes):
-    state = env.reset()
-    done = False
-    episode_loss = 0
-    episode_reward = 0
-    step_counter = 0
-    while not done:
-        action, action_tensor = agent.select_action(state)
-        next_state, reward, done = env.step(agent, action)
-        agent.update(state, action, action_tensor, reward, next_state, done, step_counter)
-        state = next_state
-        episode_loss += reward ** 2
-        episode_reward += reward
-        step_counter += 1
-        if step_counter >= 100:
-            done = True
-
-    # Apply exponential decay to epsilon after each episode
-    agent.decay_epsilon()
-    epi_loss.append(episode_loss)
-    epi_rewards.append(episode_reward)
-    deployed_nodes = env.get_deployed_nodes()
-    print(f"Episode {episode + 1} completed. Deployed nodes: {deployed_nodes}")
-    node_data_rates = env.get_node_data_rates()
-
-plt.show()
-# Plot training loss and rewards
-plt.figure(figsize=(10, 6))
-plt.plot(range(max_episodes), epi_loss, label='Training Loss')
-plt.xlabel('Episodes')
-plt.ylabel('Loss')
-plt.title('Training Loss Over Episodes')
-plt.legend()
-plt.savefig('Training Loss Over Episodes.png')
-plt.show()
-
-plt.figure(figsize=(10, 6))
-plt.plot(range(max_episodes), epi_rewards, label='Total Reward per Episode')
-plt.xlabel('Episodes')
-plt.ylabel('Total Reward')
-plt.title('Total Reward vs. Episode')
-plt.legend()
-plt.savefig('Total Reward vs. Episode.png')
-plt.show()
