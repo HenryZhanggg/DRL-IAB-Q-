@@ -1,3 +1,9 @@
+import os
+
+# Allow multiple OpenMP libraries
+os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
+
+# Your existing code follows
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -83,7 +89,7 @@ class Agent:
         self.target_model.load_state_dict(self.model.state_dict())
 
 
-def train(env, agent, episodes, batch_size=64, target_update=10):
+def train(env, agent, episodes, batch_size=64, target_update=10,save_model_path='dqn_model.pth'):
     episode_rewards = []
     episode_losses = []
     data = {
@@ -131,6 +137,7 @@ def train(env, agent, episodes, batch_size=64, target_update=10):
         env.plot_deployment()
         print(f"Episode {episode}: Total Reward = {total_reward}, Avg Loss = {avg_loss:.4f}, Deployed Nodes = {deployed_nodes}, Coverage = {coverage_percentage:.2f}%")
 
+    torch.save(agent.model.state_dict(), save_model_path)
     avg_rewards_per_100_episodes = [np.mean(episode_rewards[i:i+100]) for i in range(0, len(episode_rewards), 100)]
     avg_losses_per_100_episodes = [np.mean(episode_losses[i:i+100]) for i in range(0, len(episode_losses), 100)]
     episodes_100 = list(range(0, len(episode_rewards), 100))
@@ -344,4 +351,5 @@ env = NetworkDeploymentEnv()
 state_dim = len(env.reset())
 action_dim = env.action_space.n
 agent = Agent(state_dim, action_dim)
-rewards = train(env, agent, episodes=1000)
+model_save_path = 'dqn_network_deployment_model.pth'
+rewards, losses = train(env, agent, episodes=1000, save_model_path=model_save_path)
