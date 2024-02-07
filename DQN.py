@@ -12,7 +12,6 @@ import random
 from collections import deque
 import gym
 from gym import spaces
-from torch.optim.lr_scheduler import StepLR
 import matplotlib.pyplot as plt
 import numpy as np
 import copy
@@ -136,8 +135,6 @@ def train(env, agent, episodes, batch_size=64, target_update=10,save_model_path=
             #print(f"Episode {episode}: Epsilon = {agent.epsilon:.4f}")  # print epsilon
         env.plot_deployment()
         print(f"Episode {episode}: Total Reward = {total_reward}, Avg Loss = {avg_loss:.4f}, Deployed Nodes = {deployed_nodes}, Coverage = {coverage_percentage:.2f}%")
-
-    torch.save(agent.model.state_dict(), save_model_path)
     avg_rewards_per_100_episodes = [np.mean(episode_rewards[i:i+100]) for i in range(0, len(episode_rewards), 100)]
     avg_losses_per_100_episodes = [np.mean(episode_losses[i:i+100]) for i in range(0, len(episode_losses), 100)]
     episodes_100 = list(range(0, len(episode_rewards), 100))
@@ -188,7 +185,7 @@ class NetworkDeploymentEnv(gym.Env):
             "N": spaces.MultiBinary((self.n_potential_nodes, self.n_potential_nodes))
         })
         self.overhead = 1.2
-        self.node_data_rate =5
+        self.node_data_rate = 5
         self.donor_data_rate = 15  # 15 Gbps
         self.coverage_radius = 200
         self.backhaul_radius = 300
@@ -262,6 +259,7 @@ class NetworkDeploymentEnv(gym.Env):
 
     def total_deployed_nodes(self):
         return np.sum(self.state["D"])
+        
     def calculate_reward(self):
         alpha = 10  # Penalty for uncovered area
         beta = 0.5  # Penalty for each deployed node
@@ -281,6 +279,7 @@ class NetworkDeploymentEnv(gym.Env):
         # Final reward is the coverage reward minus penalties
         reward = coverage_reward - uncovered_area_penalty - deployment_penalty
         return reward
+        
     def calculate_reward(self):
         alpha = 100  # Penalty for uncovered area
         beta = 1  # Penalty for each deployed node
@@ -369,5 +368,6 @@ env = NetworkDeploymentEnv()
 state_dim = len(env.reset())
 action_dim = env.action_space.n
 agent = Agent(state_dim, action_dim)
-model_save_path = 'dqn_network_deployment_model.pth'
-rewards, losses = train(env, agent, episodes=1000, save_model_path=model_save_path)
+model_save_path = r'\\userfs\jz2714\w2k\Desktop\IAB\dqn_network_deployment_model.pth'
+torch.save(agent.model.state_dict(), model_save_path)
+rewards, losses = train(env, agent, episodes=500, save_model_path=model_save_path)
