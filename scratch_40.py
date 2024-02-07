@@ -65,11 +65,11 @@ class Agent:
         batch = random.sample(self.memory, batch_size)
         states, actions, rewards, next_states, dones = zip(*batch)
 
-        states = torch.FloatTensor(np.array(states))
-        actions = torch.LongTensor(actions)  # Ensure actions are long integers
-        rewards = torch.FloatTensor(rewards)
-        next_states = torch.FloatTensor(np.array(next_states))
-        dones = torch.FloatTensor(dones)
+        states = torch.FloatTensor(np.vstack(states)).to(device)
+        actions = torch.LongTensor(actions).unsqueeze(1).to(device)
+        rewards = torch.FloatTensor(rewards).unsqueeze(1).to(device)
+        next_states = torch.FloatTensor(np.vstack(next_states)).to(device)
+        dones = torch.FloatTensor(np.float32(dones)).unsqueeze(1).to(device)
 
         # Get current Q values for chosen actions
         current_q_values = self.model(states).gather(1, actions.unsqueeze(1))
