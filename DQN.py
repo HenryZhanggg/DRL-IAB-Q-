@@ -262,7 +262,25 @@ class NetworkDeploymentEnv(gym.Env):
 
     def total_deployed_nodes(self):
         return np.sum(self.state["D"])
+    def calculate_reward(self):
+        alpha = 10  # Penalty for uncovered area
+        beta = 0.5  # Penalty for each deployed node
+        gamma = 100  # Reward multiplier for coverage
 
+        total_area = self.grid_size * self.grid_size
+        covered_area = len(self.calculate_coverage())
+        uncovered_area = total_area - covered_area
+
+        coverage_percentage = (covered_area / total_area) * 100
+
+        # Calculate penalties and rewards
+        uncovered_area_penalty = (uncovered_area / total_area) * alpha
+        deployment_penalty = beta * self.total_deployed_nodes()
+        coverage_reward = gamma * (covered_area / total_area)  # Reward based on the percentage of area covered
+
+        # Final reward is the coverage reward minus penalties
+        reward = coverage_reward - uncovered_area_penalty - deployment_penalty
+        return reward
     def calculate_reward(self):
         alpha = 100  # Penalty for uncovered area
         beta = 1  # Penalty for each deployed node
