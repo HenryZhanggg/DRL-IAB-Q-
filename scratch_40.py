@@ -7,12 +7,13 @@ import random
 from collections import deque
 import gym
 from gym import spaces
-from torch.optim.lr_scheduler import StepLR
 import matplotlib.pyplot as plt
 import numpy as np
 import copy
 
+# Set the device to GPU if available
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 class DQN(nn.Module):
     def __init__(self, n_observations, n_actions):
         super(DQN, self).__init__()
@@ -28,33 +29,27 @@ class DQN(nn.Module):
         return self.layer4(x)
 
 class Agent:
-    def __init__(self, state_dim, action_dim, learning_rate=0.003, gamma=0.99, epsilon_start=1.0, epsilon_end=0.01, epsilon_decay=0.999, total_steps=100000):
+    def __init__(self, state_dim, action_dim, learning_rate=0.003, gamma=0.99, epsilon_start=1.0, epsilon_end=0.01, epsilon_decay=0.999):
         self.state_dim = state_dim
         self.action_dim = action_dim
-        self.model = DQN(state_dim, action_dim)
-        self.target_model = copy.deepcopy(self.model)
+        self.model = DQN(state_dim, action_dim).to(device)  # Move model to the device
+        self.target_model = copy.deepcopy(self.model).to(device)  # Ensure target model is also on the device
         self.optimizer = optim.Adam(self.model.parameters(), lr=learning_rate)
         self.gamma = gamma
         self.epsilon = epsilon_start
         self.epsilon_end = epsilon_end
         self.epsilon_decay = epsilon_decay
-        self.total_steps = total_steps
-        self.step_count = 0
         self.memory = deque(maxlen=10000)
-        self.model = self.model.to(device)
-        self.target_model = self.target_model.to(device)
 
     def select_action(self, state):
         if random.random() < self.epsilon:
             action_index = np.random.randint(self.action_dim)
+            return action_index
         else:
-            state = torch.FloatTensor(state).unsqueeze(0).to(device)
+            state = torch.FloatTensor(state).unsqueeze(0).to(device)  # Move state to the device
             q_values = self.model(state)
             action_index = q_values.argmax().item()
-        self.epsilon = max(self.epsilon_end, self.epsilon * np.exp(-self.epsilon_decay * self.step_count))
-        self.step_count += 1  # Increment the step counter
-
-        return action_index
+            return action_index
 
     def store_transition(self, state, action, reward, next_state, done):
         self.memory.append((state, action, reward, next_state, done))
@@ -65,11 +60,11 @@ class Agent:
         batch = random.sample(self.memory, batch_size)
         states, actions, rewards, next_states, dones = zip(*batch)
 
-        states = torch.FloatTensor(np.vstack(states)).to(device)
-        actions = torch.LongTensor(actions).unsqueeze(1).to(device)
-        rewards = torch.FloatTensor(rewards).unsqueeze(1).to(device)
-        next_states = torch.FloatTensor(np.vstack(next_states)).to(device)
-        dones = torch.FloatTensor(np.float32(dones)).unsqueeze(1).to(device)
+        states = torch.FloatTensor(np.array(states)).to(device)  # Move to device
+        actions = torch.LongTensor(actions).to(device)  # Move to device
+        rewards = torch.FloatTensor(rewards).to(device)  # Move to device
+        next_states = torch.FloatTensor(np.array(next_states)).to(device)  # Move to device
+        dones = torch.FloatTensor(dones).to(device)  # Move to device
 
         # Get current Q values for chosen actions
         current_q_values = self.model(states).gather(1, actions.unsqueeze(1))
@@ -89,7 +84,6 @@ class Agent:
     def update_target_network(self):
         self.target_model.load_state_dict(self.model.state_dict())
 
-
 def train(env, agent, episodes, batch_size=64, target_update=10):
     episode_rewards = []
     episode_losses = []
@@ -103,7 +97,6 @@ def train(env, agent, episodes, batch_size=64, target_update=10):
 
         while not done:
             action = agent.select_action(state)
-            state = torch.FloatTensor(state).unsqueeze(0).to(device)
             next_state, reward, done, _ = env.step(action)
             agent.store_transition(state, action, reward, next_state, done)
             loss = agent.experience_replay(batch_size)
@@ -125,7 +118,6 @@ def train(env, agent, episodes, batch_size=64, target_update=10):
             #print(f"Episode {episode}: Epsilon = {agent.epsilon:.4f}")  # print epsilon
         env.plot_deployment()
         print(f"Episode {episode}: Total Reward = {total_reward}, Avg Loss = {avg_loss:.4f}, Deployed Nodes = {deployed_nodes}, Coverage = {coverage_percentage:.2f}%")
-
     save_model_path = r'\\userfs\jz2714\w2k\Desktop\IAB\dqn_network_deployment_model.pth'
     torch.save(agent.model.state_dict(), save_model_path)
     avg_rewards_per_100_episodes = [np.mean(episode_rewards[i:i+100]) for i in range(0, len(episode_rewards), 100)]
