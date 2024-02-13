@@ -1,4 +1,4 @@
-#this version epsilon decreases exponentially after each step, rather than each eposide
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -30,38 +30,31 @@ class DQN(nn.Module):
         return self.layer4(x)
 
 class Agent:
-    def __init__(self, state_dim, action_dim, learning_rate=0.001, gamma=0.99, epsilon_start=1.0, epsilon_end=0.01, epsilon_decay=0.99):
+    def __init__(self, state_dim, action_dim, learning_rate=0.001, gamma=0.99, epsilon_start=1.0, epsilon_end=0.01, epsilon_decay_step=0.95, epsilon_decay_episode=0.995):
         self.state_dim = state_dim
         self.action_dim = action_dim
-        self.model = DQN(state_dim, action_dim).to(device)  # Move model to the device
-        self.target_model = copy.deepcopy(self.model).to(device)  # Ensure target model is also on the device
+        self.model = DQN(state_dim, action_dim).to(device)
+        self.target_model = copy.deepcopy(self.model).to(device)
         self.optimizer = optim.Adam(self.model.parameters(), lr=learning_rate)
         self.gamma = gamma
         self.epsilon = epsilon_start
         self.epsilon_end = epsilon_end
-        self.epsilon_decay = epsilon_decay
-        self.memory = deque(maxlen=10000)
+        self.epsilon_decay_step = epsilon_decay_step
+        self.epsilon_decay_episode = epsilon_decay_episode
+        self.memory = deque(maxlen=200000)
+        self.total_steps = 0
 
-    def select_action(self, state, action_mask):
+    def select_action(self, state):
+        self.epsilon = max(self.epsilon_end,
+                           self.epsilon * self.epsilon_decay_step ** self.total_steps)  # Exponential decay per step
         if random.random() < self.epsilon:
-            # Use the action mask to filter out invalid actions. Only consider actions where the mask is True.
-            valid_actions = np.where(action_mask)[0]  # Get indices of valid actions
-            if len(valid_actions) > 0:
-                action_index = np.random.choice(valid_actions)
-            else:
-                raise ValueError("No valid actions available.")
+            action_index = np.random.randint(self.action_dim)
+            return action_index
         else:
-            state = torch.FloatTensor(state).unsqueeze(0).to(device)  # Convert state to tensor and add batch dimension
-            q_values = self.model(state)  # Get Q-values for all actions
-            q_values = q_values.cpu().detach().numpy()  # Move Q-values to CPU and convert to numpy array
-
-            # Invalidate the Q-values of actions that are masked out by setting them to a very low number
-            masked_q_values = np.where(action_mask, q_values, -np.inf)
-
-            # Select the action with the highest Q-value from the masked Q-values
-            action_index = np.argmax(masked_q_values)
-
-        return action_index
+            state = torch.FloatTensor(state).unsqueeze(0).to(device)  # Move state to the device
+            q_values = self.model(state)
+            action_index = q_values.argmax().item()
+            return action_index
 
     def store_transition(self, state, action, reward, next_state, done):
         self.memory.append((state, action, reward, next_state, done))
@@ -96,7 +89,7 @@ class Agent:
     def update_target_network(self):
         self.target_model.load_state_dict(self.model.state_dict())
 
-def train(env, agent, episodes, batch_size=64, target_update=10,save_model_path='dqn_model.pth'):
+def train(env, agent, episodes, batch_size=64, target_update=20,save_model_path='dqn_model.pth'):
     episode_rewards = []
     episode_losses = []
     data = {
@@ -108,14 +101,14 @@ def train(env, agent, episodes, batch_size=64, target_update=10,save_model_path=
     }
 
     for episode in range(episodes):
-        state, action_mask = env.reset()
+        state = env.reset()
         total_reward = 0
         total_loss = 0
         done = False
         step_count = 0
 
         while not done:
-            action = agent.select_action(state, action_mask)
+            action = agent.select_action(state)
             next_state, reward, done, _ = env.step(action)
             agent.store_transition(state, action, reward, next_state, done)
             loss = agent.experience_replay(batch_size)
@@ -123,6 +116,7 @@ def train(env, agent, episodes, batch_size=64, target_update=10,save_model_path=
             total_reward += reward
             total_loss += loss
             step_count += 1
+            agent.total_steps += 1
 
         if episode % target_update == 0:
             agent.update_target_network()
@@ -138,9 +132,7 @@ def train(env, agent, episodes, batch_size=64, target_update=10,save_model_path=
         data["Deployed Nodes"].append(deployed_nodes)
         data["Coverage"].append(coverage_percentage)
 
-        if agent.epsilon > agent.epsilon_end:
-            agent.epsilon *= agent.epsilon_decay
-            #print(f"Episode {episode}: Epsilon = {agent.epsilon:.4f}")  # print epsilon
+        agent.epsilon = max(agent.epsilon_end, agent.epsilon * agent.epsilon_decay_episode)
         #env.plot_deployment()
         print(f"Episode {episode}: Total Reward = {total_reward}, Avg Loss = {avg_loss:.4f}, Deployed Nodes = {deployed_nodes}, Coverage = {coverage_percentage:.2f}%")
 
@@ -199,7 +191,6 @@ def train(env, agent, episodes, batch_size=64, target_update=10,save_model_path=
         for i in range(len(data['Episode'])):
             writer.writerow([data['Episode'][i], data['Total Reward'][i], data['Avg Loss'][i], data['Deployed Nodes'][i], data['Coverage'][i]])
 
-
     return episode_rewards, episode_losses
 class NetworkDeploymentEnv(gym.Env):
     def __init__(self):
@@ -229,29 +220,33 @@ class NetworkDeploymentEnv(gym.Env):
         node_index = action_index // 2  # Assuming each node has two actions: deploy and remove
         action_type = action_index % 2  # 0 for deploy, 1 for remove
 
-        # Perform the corresponding action
-        if action_type == 0:  # Deploy action
-            if self.state["D"][node_index] == 0:  # Check if the node is not already deployed
-                self.state["D"][node_index] = 1  # Deploy the node
-                #print(f"Deployed node at position {node_index}.")
-                if not self.can_provide_service(node_index):
-                    rewards -= 100  # Penalty for deploying without service
-                    #print(f"error1.")
-                else:
-                    self.update_connections()
-                    self.update_network_data_rate()
-                    print(f"success1.")
-            else:
-                print(f"Position {node_index} is already deployed.")
+        # Check if the action is on a pre-fixed donor position and apply a high penalty
+        if node_index in self.permanent_donors:
+            rewards -= 500  # High penalty for actions on donor positions
+            print(f"Action on pre-fixed donor position {node_index}. High penalty applied.")
         else:
-            if self.state["D"][node_index] == 1:  # Check if the node is deployed
-                self.state["D"][node_index] = 0  # Remove the node
-                print(f"Removed node from position {node_index}.")
-                # Update connections and network data rate after removing the node
-                self.update_connections()
-                self.update_network_data_rate()
+            # Perform the corresponding action
+            if action_type == 0:  # Deploy action
+                if self.state["D"][node_index] == 0:  # Check if the node is not already deployed
+                    self.state["D"][node_index] = 1  # Deploy the node
+                    if not self.can_provide_service(node_index):
+                        rewards -= 100  # Penalty for deploying without service
+                        print(f"Deployed node at position {node_index} without service. Penalty applied.")
+                    else:
+                        print(f"Deployed node at position {node_index} with service.")
+                else:
+                    print(f"Position {node_index} is already deployed.")
             else:
-                print(f"Position {node_index} is not deployed.")
+                if self.state["D"][node_index] == 1:  # Check if the node is deployed
+                    self.state["D"][node_index] = 0  # Remove the node
+                    print(f"Removed node from position {node_index}.")
+                else:
+                    print(f"Position {node_index} is not deployed.")
+
+
+        # Update connections and network data rate after each action
+        self.update_connections()
+        self.update_network_data_rate()
 
         total_reward = self.calculate_reward() + rewards
         self.current_step += 1
@@ -259,7 +254,7 @@ class NetworkDeploymentEnv(gym.Env):
             done = True
             self.current_step = 0
 
-        return self._get_flattened_state(),total_reward,  done, {}
+        return self._get_flattened_state(), total_reward, done, {}
 
     def reset(self):
         self.state = {
@@ -273,8 +268,7 @@ class NetworkDeploymentEnv(gym.Env):
             self.state["D"][idx] = 1  # Mark as deployed
         self.update_connections()
         self.update_network_data_rate()
-        self.update_action_mask()  # Update the action mask based on permanent donors
-        return self._get_flattened_state(), self.action_mask
+        return self._get_flattened_state()
 
     def _get_flattened_state(self):
         # Flatten the state components into a single array
@@ -290,13 +284,6 @@ class NetworkDeploymentEnv(gym.Env):
     def total_deployed_nodes(self):
         return np.sum(self.state["D"])
 
-    def update_action_mask(self):
-        # Initialize the action mask to allow all actions
-        self.action_mask = np.ones(self.action_space.shape, dtype=bool)
-        # For each donor node, disable actions (both deploy and remove)
-        for idx in self.permanent_donors:
-            self.action_mask[idx * 2] = False  # Assuming deploy action is even indexed
-            self.action_mask[idx * 2 + 1] = False  # Assuming remove action is odd indexed
 
     def calculate_reward(self):
         alpha = 10  # Penalty for uncovered area
@@ -387,9 +374,9 @@ class NetworkDeploymentEnv(gym.Env):
 
 
 max_steps = 100
-scale = 10
+scale = 50
 env = NetworkDeploymentEnv()
 state_dim = len(env.reset())
 action_dim = env.action_space.n
 agent = Agent(state_dim, action_dim)
-rewards = train(env, agent, episodes=100)
+rewards = train(env, agent, episodes=1000)
