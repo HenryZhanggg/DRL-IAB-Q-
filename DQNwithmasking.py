@@ -102,6 +102,7 @@ def train(env, agent, episodes, batch_size=1, target_update=20,save_model_path='
 
     for episode in range(episodes):
         state = env.reset()
+        print_initial_R_N(state, env.n_potential_nodes)
         total_reward = 0
         total_loss = 0
         done = False
@@ -110,12 +111,14 @@ def train(env, agent, episodes, batch_size=1, target_update=20,save_model_path='
         while not done:
             action = agent.select_action(state)
             node_index = action // 2  # 根据你的动作设计来计算节点索引
-            #print(f'Before action, node {node_index} state in flattened state: {state[node_index]}')  # 打印动作前的节点状态
+            print(f'Before action, node {node_index} state in flattened state: {state[node_index]}')  # 打印动作前的节点状态
             next_state, reward, done, _ = env.step(action)
-            #print(f'After action, node {node_index} state in flattened state: {next_state[node_index]}')  # 打印动作后的节点状态
+            print_changes_R_N(state, next_state, env.n_potential_nodes, action)  # Print changes
+            print(f'After action, node {node_index} state in flattened state: {next_state[node_index]}')  # 打印动作后的节点状态
             agent.store_transition(state, action, reward, next_state, done)
             loss = agent.experience_replay(batch_size)
             state = next_state
+            #print(f'After action 1, node {node_index} state in flattened state: {state[node_index]}')  # 打印动作后的节点状态
             total_reward += reward
             #print(total_reward)
             total_loss += loss
@@ -196,6 +199,22 @@ def train(env, agent, episodes, batch_size=1, target_update=20,save_model_path='
             writer.writerow([data['Episode'][i], data['Total Reward'][i], data['Avg Loss'][i], data['Deployed Nodes'][i], data['Coverage'][i]])
 
     return episode_rewards, episode_losses
+
+def print_initial_R_N(state, n_potential_nodes):
+    R_start = n_potential_nodes
+    N_start = 2 * n_potential_nodes
+    print("Initial R:", state[R_start:R_start + n_potential_nodes])
+    print("Initial N row 0:", state[N_start:N_start + n_potential_nodes])  # Example: first row
+
+def print_changes_R_N(old_state, new_state, n_potential_nodes, action):
+    R_start = n_potential_nodes
+    N_start = 2 * n_potential_nodes
+    print(f"Action taken: {action}")
+    print("Old R:", old_state[R_start:R_start + n_potential_nodes])
+    print("New R:", new_state[R_start:R_start + n_potential_nodes])
+    print("Old N row 0:", old_state[N_start:N_start + n_potential_nodes])  # Example: first row
+    print("New N row 0:", new_state[N_start:N_start + n_potential_nodes])  # Example: first row
+
 class NetworkDeploymentEnv(gym.Env):
     def __init__(self):
         super(NetworkDeploymentEnv, self).__init__()
@@ -384,11 +403,11 @@ class NetworkDeploymentEnv(gym.Env):
         plt.title('Final Deployment')
         plt.show()
 
-max_steps = 150
+max_steps = 10
 scale = 100
 numberofdonor = 5
 env = NetworkDeploymentEnv()
 state_dim = len(env.reset())
 action_dim = env.action_space.n
 agent = Agent(state_dim, action_dim)
-rewards = train(env, agent, episodes=2000)
+rewards = train(env, agent, episodes=1)
