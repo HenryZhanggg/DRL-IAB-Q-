@@ -111,10 +111,10 @@ def train(env, agent, episodes, batch_size=1, target_update=20,save_model_path='
         while not done:
             action = agent.select_action(state)
             node_index = action // 2  # 根据你的动作设计来计算节点索引
-            print(f'Before action, node {node_index} state in flattened state: {state[node_index]}')  # 打印动作前的节点状态
+            #print(f'Before action, node {node_index} state in flattened state: {state[node_index]}')  # 打印动作前的节点状态
             next_state, reward, done, _ = env.step(action)
-            print_changes_R_N(state, next_state, env.n_potential_nodes, action)  # Print changes
-            print(f'After action, node {node_index} state in flattened state: {next_state[node_index]}')  # 打印动作后的节点状态
+            #print_changes_R_N(state, next_state, env.n_potential_nodes, action)  # Print changes
+            #print(f'After action, node {node_index} state in flattened state: {next_state[node_index]}')  # 打印动作后的节点状态
             agent.store_transition(state, action, reward, next_state, done)
             loss = agent.experience_replay(batch_size)
             state = next_state
@@ -141,7 +141,7 @@ def train(env, agent, episodes, batch_size=1, target_update=20,save_model_path='
 
         #agent.epsilon = max(agent.epsilon_end, agent.epsilon * agent.epsilon_decay_episode)
         #env.plot_deployment()
-        print(f"Episode {episode}: Total Reward = {total_reward}, Avg Loss = {avg_loss:.4f}, Deployed Nodes = {deployed_nodes}, Coverage = {coverage_percentage:.2f}%")
+        print(f"Episode {episode}: Total Reward = {total_reward}, Avg Loss = {avg_loss:.4f}, Deployed Nodes = {deployed_nodes-numberofdonor}, Coverage = {coverage_percentage:.2f}%")
 
     avg_rewards_per_scale_episodes = [np.mean(episode_rewards[i:i+scale]) for i in range(0, len(episode_rewards),scale)]
     avg_losses_per_scale_episodes = [np.mean(episode_losses[i:i+scale]) for i in range(0, len(episode_losses), scale)]
@@ -206,14 +206,7 @@ def print_initial_R_N(state, n_potential_nodes):
     print("Initial R:", state[R_start:R_start + n_potential_nodes])
     print("Initial N row 0:", state[N_start:N_start + n_potential_nodes])  # Example: first row
 
-def print_changes_R_N(old_state, new_state, n_potential_nodes, action):
-    R_start = n_potential_nodes
-    N_start = 2 * n_potential_nodes
-    print(f"Action taken: {action}")
-    print("Old R:", old_state[R_start:R_start + n_potential_nodes])
-    print("New R:", new_state[R_start:R_start + n_potential_nodes])
-    print("Old N row 0:", old_state[N_start:N_start + n_potential_nodes])  # Example: first row
-    print("New N row 0:", new_state[N_start:N_start + n_potential_nodes])  # Example: first row
+
 
 class NetworkDeploymentEnv(gym.Env):
     def __init__(self):
@@ -232,60 +225,106 @@ class NetworkDeploymentEnv(gym.Env):
         self.donor_data_rate = 15  # 15 Gbps
         self.coverage_radius = 20
         self.backhaul_radius = 30
+        self.max_steps = max_steps
         self.current_step = 0
         self.reset()
 
     def step(self, action_index):
-        print('action_index',action_index)
         rewards = 0
         done = False
 
-        # Determine the node index and action (deploy or remove) from the action index
-        node_index = action_index // 2  # Assuming each node has two actions: deploy and remove
+        node_index = action_index // 2
         action_type = action_index % 2  # 0 for deploy, 1 for remove
-        #print(self.state["D"].shape)
-        # Check if the action is on a pre-fixed donor position and apply a high penalty
-        if node_index in self.permanent_donors:
-            rewards -= 500  # High penalty for actions on donor positions
-            print(f"Action on pre-fixed donor position {node_index}. High penalty applied.")
-        else:
-            # Perform the corresponding action
-            if action_type == 0:  # Deploy action
-                if self.state["D"][node_index] == 0:  # Check if the node is not already deployed
-                    self.state["D"][node_index] = 1  # Deploy the node
-                    print(f"Deployed node at position {node_index} .")
-                    if not self.can_provide_service(node_index):
-                        rewards -= 100  # Penalty for deploying without service
-                        self.update_connections()
-                        self.update_network_data_rate()
-                        self.state["D"][node_index] = 1  # Deploy the node
-                        print("execute Deployed node",self.state["D"][node_index])
-                        print(f"Deployed node at position {node_index} without service. Penalty applied.")
-                    else:
-                        self.state["D"][node_index] = 1  # Deploy the node
-                        self.update_connections()
-                        self.update_network_data_rate()
-                        print(f"Deployed node at position {node_index} with service.")
-                else:
-                    print(f"Position {node_index} is already deployed.")
-            else:
-                if self.state["D"][node_index] == 1:  # Check if the node is deployed
-                    self.state["D"][node_index] = 0  # Remove the node
-                    self.update_connections()
-                    self.update_network_data_rate()
-                    print(f"Removed node from position {node_index}.")
-                else:
-                    print(f"Position {node_index} is not deployed.")
-                    self.state["D"][node_index] = 0  # Remove the node
 
+        action_desc = "deploying" if action_type == 0 else "removing"
+        print(f"Action: {action_desc} node at position {node_index}")
+
+        if node_index in self.permanent_donors and action_type == 1:
+            # Trying to remove a pre-fixed donor node
+            print(f"Attempted to remove a pre-fixed donor at {node_index}. High penalty applied.")
+            rewards -= 500
+        elif action_type == 0:
+            rewards += self.deploy_node(node_index)
+        else:
+            rewards += self.remove_node(node_index)
+        #self.print_network_status()
         total_reward = self.calculate_reward() + rewards
-        #print('step',self.current_step)
         self.current_step += 1
-        if self.current_step >= max_steps:  # Or any other condition to end the episode
+
+        if self.current_step >= self.max_steps:
             done = True
             self.current_step = 0
 
         return self._get_flattened_state(), total_reward, done, {}
+
+    def deploy_node(self, node_index):
+        if self.state["D"][node_index] == 1:  # 如果节点已经被部署
+            print(f"Node {node_index} is already deployed. High penalty applied.")
+            return -500  # 返回高惩罚
+        self.state["D"][node_index] = 1  # 部署节点
+        connected = self.reconnect_node(node_index)  # 尝试连接到现有网络
+        if not connected:
+            print(f"Deployed node {node_index} could not find a node to connect. High penalty applied.")
+            self.state["D"][node_index] = 1
+            return -500  # 如果没有找到可以连接的节点，返回高惩罚
+        print(f"Successfully deployed and connected node at index {node_index}.")
+        return 0  # 无惩罚
+
+    def remove_node(self, node_index):
+        if self.state["D"][node_index] == 0:  # 如果节点位置上没有节点
+            print(f"No node at position {node_index} to be removed.")
+            return 0  # 直接返回，无惩罚
+        self.state["D"][node_index] = 0  # 移除节点
+        for i in range(self.n_potential_nodes):
+            self.state["N"][node_index][i] = 0
+            self.state["N"][i][node_index] = 0  # 断开连接
+        if not self.ensure_network_integrity():  # 检查并保障网络完整性
+            print(f"Failed to ensure network integrity after removing node {node_index}. High penalty applied.")
+            return -500  # 如果无法保障网络完整性，返回高惩罚
+        return 0  # 无惩罚
+
+    def ensure_network_integrity(self):
+        isolated_nodes = [i for i in range(self.n_potential_nodes) if self.state["D"][i] == 1 and not any(self.state["N"][i])]
+        if isolated_nodes:
+            print(f"Ensuring network integrity for isolated nodes: {isolated_nodes}")
+        for node_index in isolated_nodes:
+            if not self.reconnect_node(node_index):  # 尝试重新连接孤立节点
+                print(f"Failed to reconnect isolated node {node_index}. High penalty applied.")
+                return False  # 如果有孤立节点无法重新连接，返回False
+        if not isolated_nodes:
+            print("No isolated nodes found. Network integrity maintained.")
+        return True  # 所有孤立节点都成功重新连接，返回True
+
+    def print_network_status(self):
+        print("Current Connection Matrix (N):")
+        for i in range(self.n_potential_nodes):
+            print(f"Node {i}: {self.state['N'][i]}")
+        print("\nCurrent Data Rate Status (R):")
+        for i in range(self.n_potential_nodes):
+            print(f"Node {i}: Data Rate = {self.state['R'][i]}")
+        print("\n")
+
+    def reconnect_node(self, node_index):
+        best_target = None
+        max_data_rate = -1
+        for i in range(self.n_potential_nodes):
+            if self.state["D"][i] == 1 and i != node_index:
+                distance = self.calculate_distance(i, node_index)
+                if distance <= self.backhaul_radius and self.state["R"][i] > max_data_rate:
+                    best_target = i
+                    max_data_rate = self.state["R"][i]
+        if best_target is not None:
+            self.state["N"][node_index][best_target] = 1
+            self.state["N"][best_target][node_index] = 1  # 根据网络模型可能需要调整为单向连接
+            self.state["R"][best_target] -= self.node_data_rate * self.overhead
+            # 遍历所有节点，找到与node_index直接连接的节点，并减少它们的data rate
+            for i in range(self.n_potential_nodes):
+                if self.state["N"][best_target][i] == 1:  # 如果best_target与i节点连接
+                    self.state["R"][i] -= self.node_data_rate * self.overhead  # 调整data rate
+            print(f"Reconnected node {node_index} to node {best_target} with data rate {self.state['R'][best_target]}")
+            self.state["R"][node_index] = self.state["R"][best_target]
+            return True
+        return False
 
     def reset(self):
         self.state = {
@@ -293,12 +332,14 @@ class NetworkDeploymentEnv(gym.Env):
             "R": np.zeros(self.n_potential_nodes),
             "N": np.zeros((self.n_potential_nodes, self.n_potential_nodes))
         }
+        self.state["N"] = np.zeros((self.n_potential_nodes, self.n_potential_nodes))
+        self.state["R"] = np.zeros(self.n_potential_nodes)
         # Randomly choose 10 donor locations
         self.permanent_donors = np.random.choice(range(self.n_potential_nodes), numberofdonor, replace=False)
         for idx in self.permanent_donors:
             self.state["D"][idx] = 1  # Mark as deployed
-        self.update_connections()
-        self.update_network_data_rate()
+            self.state["R"][idx] = 15
+
         return self._get_flattened_state()
 
     def _get_flattened_state(self):
@@ -313,8 +354,7 @@ class NetworkDeploymentEnv(gym.Env):
         pass
 
     def total_deployed_nodes(self):
-        return np.sum(self.state["D"])
-
+        return np.sum(self.state["D"])-numberofdonor
 
     def calculate_reward(self):
         alpha = 10  # Penalty for uncovered area
@@ -332,7 +372,7 @@ class NetworkDeploymentEnv(gym.Env):
         deployment_penalty = beta * self.total_deployed_nodes()
         #coverage_reward = gamma * (covered_area / total_area)  # Reward based on the percentage of area covered
 
-        # Final reward is the coverage reward minus penalties
+        # Final reward is thOld N row e coverage reward minus penalties
         reward = - uncovered_area_penalty - deployment_penalty
         return reward
 
@@ -372,20 +412,29 @@ class NetworkDeploymentEnv(gym.Env):
 
     def update_connections(self):
         for i in range(self.n_potential_nodes):
-            for j in range(self.n_potential_nodes):
-                if i != j and self.state["D"][i] == 1:
-                    distance = self.calculate_distance(i, j)
-                    if distance <= self.backhaul_radius and self.state["R"][i] >= self.node_data_rate * self.overhead:
-                        self.state["N"][i][j] = 1
-                    else:
-                        self.state["N"][i][j] = 0
+            if self.state["D"][i] == 1:  # If node i is deployed
+                # Find the closest node that can provide service
+                closest_node, min_distance = None, float('inf')
+                for j in range(self.n_potential_nodes):
+                    if i != j and self.state["D"][j] == 1:
+                        distance = self.calculate_distance(i, j)
+                        if distance <= self.backhaul_radius and self.state["R"][
+                            j] >= self.node_data_rate * self.overhead:
+                            if distance < min_distance:
+                                closest_node, min_distance = j, distance
+                # Connect to the closest node if found
+                if closest_node is not None:
+                    self.state["N"][i][closest_node] = 1
 
     def update_network_data_rate(self):
+        # Adjust data rates based on connections
         for i in range(self.n_potential_nodes):
             if self.state["D"][i] == 1:
-                connected_nodes = [j for j in range(self.n_potential_nodes) if self.state["N"][i][j] == 1]
-                total_data_rate_consumption = sum(self.node_data_rate * self.overhead for j in connected_nodes)
-                self.state["R"][i] = max(0, self.donor_data_rate - total_data_rate_consumption)
+                for j in range(self.n_potential_nodes):
+                    if self.state["N"][i][j] == 1:
+                        # Reduce the data rate of the connected node
+                        self.state["R"][j] -= self.node_data_rate * self.overhead
+                        break  # Ensure only one connection affects the data rate
 
     def calculate_distance(self, node_index1, node_index2):
         x1, y1 = self.get_node_position(node_index1)
@@ -403,11 +452,11 @@ class NetworkDeploymentEnv(gym.Env):
         plt.title('Final Deployment')
         plt.show()
 
-max_steps = 10
+max_steps = 150
 scale = 100
 numberofdonor = 5
 env = NetworkDeploymentEnv()
 state_dim = len(env.reset())
 action_dim = env.action_space.n
 agent = Agent(state_dim, action_dim)
-rewards = train(env, agent, episodes=1)
+rewards = train(env, agent, episodes=2000)
