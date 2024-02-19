@@ -311,14 +311,14 @@ class NetworkDeploymentEnv(gym.Env):
     def deploy_node(self, node_index):
         if self.state["D"][node_index] == 1:  # 如果节点已经被部署
             print(f"Node {node_index} is already deployed. High penalty applied.")
-            rewards = -self.calculate_reward()*2
+            rewards = self.calculate_reward()*2
             return rewards  # 返回高惩罚
         self.state["D"][node_index] = 1  # 部署节点
         connected = self.reconnect_node(node_index)  # 尝试连接到现有网络
         if not connected:
             print(f"Deployed node {node_index} could not find a node to connect. High penalty applied.")
             self.state["D"][node_index] = 1
-            rewards = -self.calculate_reward() * 3
+            rewards = self.calculate_reward() * 3
             return rewards  # 如果没有找到可以连接的节点，返回高惩罚
         print(f"Successfully deployed and connected node at index {node_index}.")
         return 0  # 无惩罚
@@ -472,7 +472,7 @@ class NetworkDeploymentEnv(gym.Env):
         total_area = self.grid_size * self.grid_size
         covered_dorarea = len(self.calculate_dorcoverage())
         additional_covered_area = len(self.calculate_addcoverage())
-        coverage_percentage = (additional_covered_area / (total_area-covered_dorarea)) * 100
+        coverage_percentage = (additional_covered_area +covered_dorarea/ total_area) * 100
         return coverage_percentage
 
 
