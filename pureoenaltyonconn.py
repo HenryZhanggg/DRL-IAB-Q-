@@ -106,7 +106,7 @@ def train(env, agent, episodes, batch_size=128, target_update=50,save_model_path
 
     for episode in range(episodes):
         state = env.reset()
-        print_initial_R_N(state, env.n_potential_nodes)
+        #print_initial_R_N(state, env.n_potential_nodes)
         total_reward = 0
         total_loss = 0
         done = False
@@ -167,6 +167,8 @@ def train(env, agent, episodes, batch_size=128, target_update=50,save_model_path
     avg_rewards_per_scale_episodes = [np.mean(episode_rewards[i:i+scale]) for i in range(0, len(episode_rewards),scale)]
     avg_losses_per_scale_episodes = [np.mean(episode_losses[i:i+scale]) for i in range(0, len(episode_losses), scale)]
     avg_numofnodes_per_scale_episodes = [np.mean(data["Deployed Nodes"][i:i + scale]) for i in range(0, len(data["Deployed Nodes"]), scale)]
+    avg_coverage_per_scale_episodes = [np.mean(data["Coverage"][i:i + scale]) for i in
+                                         range(0, len(data["Coverage"]), scale)]
     episodes_scale = list(range(0, len(episode_rewards), scale))
     timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     filename = f'all_episodes_step_details {timestamp}.csv'
@@ -222,6 +224,8 @@ def train(env, agent, episodes, batch_size=128, target_update=50,save_model_path
     plt.subplot(1, 2, 2)
     plt.plot(data["Episode"], data["Coverage"], label='Coverage Percentage per Episode', color='purple', marker='o',
              linestyle='-', linewidth=1, markersize=4)
+    plt.plot(episodes_scale, avg_coverage_per_scale_episodes, label='Avg nodes per 10 Episodes', color='red',
+             linewidth=2)
     plt.xlabel('Episodes')
     plt.ylabel('Coverage Percentage')
     plt.title('Episode vs Coverage Percentage')
@@ -288,13 +292,14 @@ class NetworkDeploymentEnv(gym.Env):
         if node_index in self.permanent_donors and action_type == 1:
             # Trying to remove a pre-fixed donor node
             print(f"Attempted to remove a pre-fixed donor at {node_index}. High penalty applied.")
-            rewards -= 50000
+            rewards = self.calculate_reward() * 4
+
         elif action_type == 0:
             rewards += self.deploy_node(node_index)
         else:
             rewards += self.remove_node(node_index)
         #self.print_network_status()
-        total_reward = self.calculate_reward()+rewards
+        total_reward = self.calculate_reward() + rewards
         self.current_step += 1
 
         if self.current_step >= self.max_steps:
@@ -306,12 +311,15 @@ class NetworkDeploymentEnv(gym.Env):
     def deploy_node(self, node_index):
         if self.state["D"][node_index] == 1:  # 如果节点已经被部署
             print(f"Node {node_index} is already deployed. High penalty applied.")
-            return -5000  # 返回高惩罚
+            rewards = -self.calculate_reward()*2
+            return rewards  # 返回高惩罚
         self.state["D"][node_index] = 1  # 部署节点
         connected = self.reconnect_node(node_index)  # 尝试连接到现有网络
         if not connected:
             print(f"Deployed node {node_index} could not find a node to connect. High penalty applied.")
-            return -5000  # 如果没有找到可以连接的节点，返回高惩罚
+            self.state["D"][node_index] = 1
+            rewards = -self.calculate_reward() * 3
+            return rewards  # 如果没有找到可以连接的节点，返回高惩罚
         print(f"Successfully deployed and connected node at index {node_index}.")
         return 0  # 无惩罚
 
@@ -396,7 +404,7 @@ class NetworkDeploymentEnv(gym.Env):
         R_flat = self.state["R"].flatten()
         N_flat = self.state["N"].flatten()
         flattened_state = np.concatenate([D_flat, R_flat, N_flat])
-        print(flattened_state)
+        #print(flattened_state)
         return flattened_state
 
     def render(self, mode='human'):
@@ -406,13 +414,14 @@ class NetworkDeploymentEnv(gym.Env):
         return np.sum(self.state["D"])-numberofdonor
 
     def calculate_reward(self):
-        alpha = 0  # Penalty for uncovered area
-        beta = 0  # Penalty for each deployed node
+        alpha = 10  # Penalty for uncovered area
+        beta = 0.5  # Penalty for each deployed node
         #gamma = 100  # Reward multiplier for coverage
 
         total_area = self.grid_size * self.grid_size
-        covered_area = len(self.calculate_coverage())
-        uncovered_area = total_area - covered_area
+        covered_addarea = len(self.calculate_addcoverage())
+        covered_dorarea = len(self.calculate_dorcoverage())
+        uncovered_area = total_area - covered_addarea- covered_dorarea
 
         #coverage_percentage = (covered_area / total_area) * 100
 
@@ -425,22 +434,47 @@ class NetworkDeploymentEnv(gym.Env):
         reward = - uncovered_area_penalty - deployment_penalty
         return reward
 
-    def calculate_coverage(self):
-        covered_grids = set()
+    def calculate_addcoverage(self):
+        # Calculate coverage by all nodes including predefined donors
+        total_covered_grids = set()
         for i in range(self.n_potential_nodes):
             if self.state["D"][i] == 1:
                 node_x, node_y = self.get_node_position(i)
                 for x in range(node_x - self.coverage_radius, node_x + self.coverage_radius + 1):
                     for y in range(node_y - self.coverage_radius, node_y + self.coverage_radius + 1):
                         if 0 <= x < self.grid_size and 0 <= y < self.grid_size:
-                            covered_grids.add((x, y))
-        return covered_grids
+                            total_covered_grids.add((x, y))
+
+        # Calculate coverage by predefined donors only
+        donor_covered_grids = set()
+        for idx in self.permanent_donors:
+            donor_x, donor_y = self.get_node_position(idx)
+            for x in range(donor_x - self.coverage_radius, donor_x + self.coverage_radius + 1):
+                for y in range(donor_y - self.coverage_radius, donor_y + self.coverage_radius + 1):
+                    if 0 <= x < self.grid_size and 0 <= y < self.grid_size:
+                        donor_covered_grids.add((x, y))
+
+        # Calculate additional coverage provided by deployed nodes excluding predefined donors
+        additional_coverage = total_covered_grids - donor_covered_grids
+        return additional_coverage
+
+    def calculate_dorcoverage(self):
+        donor_covered_grids = set()
+        for idx in self.permanent_donors:
+            donor_x, donor_y = self.get_node_position(idx)
+            for x in range(donor_x - self.coverage_radius, donor_x + self.coverage_radius + 1):
+                for y in range(donor_y - self.coverage_radius, donor_y + self.coverage_radius + 1):
+                    if 0 <= x < self.grid_size and 0 <= y < self.grid_size:
+                        donor_covered_grids.add((x, y))
+        return donor_covered_grids
 
     def calculate_coverage_percentage(self):
         total_area = self.grid_size * self.grid_size
-        covered_area = len(self.calculate_coverage())
-        coverage_percentage = (covered_area / total_area) * 100
+        covered_dorarea = len(self.calculate_dorcoverage())
+        additional_covered_area = len(self.calculate_addcoverage())
+        coverage_percentage = (additional_covered_area / (total_area-covered_dorarea)) * 100
         return coverage_percentage
+
 
     def get_node_position(self, node_index):
         row = node_index // (self.grid_size // self.node_spacing)
@@ -497,14 +531,14 @@ class NetworkDeploymentEnv(gym.Env):
             col = i % (self.grid_size // self.node_spacing)
             grid[row, col] = self.state["D"][i]
 
-        plt.figure(figsize=(10, 10))
-        plt.imshow(grid, cmap='Greys', interpolation='nearest')
-        plt.title(f'Final Deployment - Episode {episode}, Coverage: {coverage_percentage:.2f}%')
+        #plt.figure(figsize=(10, 10))
+        #plt.imshow(grid, cmap='Greys', interpolation='nearest')
+        #plt.title(f'Final Deployment - Episode {episode}, Coverage: {coverage_percentage:.2f}%')
         # Generate a timestamp or unique identifier
-        timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-        filename = f'Final_Deployment_Episode_{episode}_Time_{timestamp}.png'
-        plt.savefig(filename)
-        plt.close()  # Close the plot to free memory
+        #timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        #filename = f'Final_Deployment_Episode_{episode}_Time_{timestamp}.png'
+        #plt.savefig(filename)
+        #plt.close()  # Close the plot to free memory
 
 max_steps = 20
 scale = 100
@@ -513,4 +547,4 @@ env = NetworkDeploymentEnv()
 state_dim = len(env.reset())
 action_dim = env.action_space.n
 agent = Agent(state_dim, action_dim)
-rewards = train(env, agent, episodes=1000)
+rewards = train(env, agent, episodes=10000)
