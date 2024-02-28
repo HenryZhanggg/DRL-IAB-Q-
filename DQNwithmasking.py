@@ -1,5 +1,5 @@
+#linear decay test whether DQN can run the original environment
 #2*2 simple test and only consider deploy/keep same action, for each node, two actions, baseline
-# fix donor with 25 actions
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -33,7 +33,6 @@ class DQN(nn.Module):
         x = F.relu(self.layer2(x))
         x = F.relu(self.layer3(x))
         return self.layer4(x)
-
 class Agent:
     def __init__(self, state_dim, action_dim, learning_rate=0.0001, gamma=0.99, epsilon_start=1.0, epsilon_end=0.01, epsilon_decay=10000):
         self.state_dim = state_dim
@@ -58,7 +57,6 @@ class Agent:
             q_values = self.model(state)
             action_index = q_values.argmax().item()
         return action_index
-
 
     def store_transition(self, state, action, reward, next_state, done):
         self.memory.append((state, action, reward, next_state,done))
@@ -89,12 +87,13 @@ class Agent:
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
+
         return loss.item()
 
     def update_target_network(self):
         self.target_model.load_state_dict(self.model.state_dict())
 
-def train(env, agent, episodes, batch_size=128, target_update=64, scale=100):
+def train(env, agent, episodes, batch_size=64, target_update=64, scale=100):
     episode_rewards = []
     episode_losses = []
     data = {
@@ -116,7 +115,7 @@ def train(env, agent, episodes, batch_size=128, target_update=64, scale=100):
 
         while not done:
             action = agent.select_action(state)
-            next_state, reward, done = env.step(action)
+            next_state, reward, done, _ = env.step(action)
             agent.store_transition(state, action, reward, next_state, done)
             loss = agent.experience_replay(batch_size)
             #print('step', step_count)
@@ -137,8 +136,7 @@ def train(env, agent, episodes, batch_size=128, target_update=64, scale=100):
                 "Coverage": env.calculate_coverage_percentage()
             }
             all_steps_details.append(step_details)
-            print('agent.total_steps',agent.total_steps)
-            print('step_count', step_count)
+            print('self.total_steps2', agent.total_steps)
             if agent.total_steps % target_update == 0:
                 agent.update_target_network()
 
@@ -151,9 +149,8 @@ def train(env, agent, episodes, batch_size=128, target_update=64, scale=100):
                 print(f"100% Coverage achieved at episode {episode} step {step_count}")
                 # step_count = 0
                 done = True
-        print('total_loss',total_loss)
+
         avg_loss = total_loss / step_count #if step_count else 0
-        print('avg_loss', avg_loss)
         #print("avg_loss: ", avg_loss,step_count)
         episode_rewards.append(total_reward)
         episode_losses.append(avg_loss)
@@ -164,7 +161,6 @@ def train(env, agent, episodes, batch_size=128, target_update=64, scale=100):
         data["Episode"].append(episode)
         data["Total Reward"].append(total_reward)
         data["Avg Loss"].append(avg_loss)
-        print("Avg loss saved: ", data["Avg Loss"])
         data["Deployed Nodes"].append(deployed_nodes)
         data["Coverage"].append(coverage_percentage)
 
@@ -267,7 +263,7 @@ class NetworkDeploymentEnv(gym.Env):
         self.grid_size = 100
         self.node_spacing = 20
         self.n_potential_nodes = (self.grid_size // self.node_spacing) ** 2
-        self.action_space = self.n_potential_nodes + 1
+        self.action_space = spaces.MultiBinary(2 * self.n_potential_nodes)
         self.observation_space = spaces.Dict({
             "D": spaces.MultiBinary(self.n_potential_nodes),
             "R": spaces.Box(low=0, high=20, shape=(self.n_potential_nodes,)),
@@ -282,12 +278,8 @@ class NetworkDeploymentEnv(gym.Env):
         self.current_step = 0
         self.max_steps = max_steps
         # Initialize permanent donors here and keep them constant across episodes
+        #self.permanent_donors = np.random.choice(range(self.n_potential_nodes), self.numberofdonor, replace=False)
 
-        self.permanent_donors = self.initialize_permanent_donors()
-
-    def initialize_permanent_donors(self):
-        # Fixed donor positions
-        return np.random.choice(range(self.n_potential_nodes), self.numberofdonor, replace=False)
 
     def reset(self):
         self.state = {
@@ -298,7 +290,7 @@ class NetworkDeploymentEnv(gym.Env):
         self.state["N"] = np.zeros((self.n_potential_nodes, self.n_potential_nodes))
         self.state["R"] = np.zeros(self.n_potential_nodes)
         # Randomly choose 10 donor locations
-        #self.permanent_donors = np.random.choice(range(self.n_potential_nodes), numberofdonor, replace=False)
+        self.permanent_donors = np.random.choice(range(self.n_potential_nodes), numberofdonor, replace=False)
         for idx in self.permanent_donors:
             self.state["D"][idx] = 1  # Mark as deployed
             self.state["R"][idx] = 15
@@ -306,68 +298,73 @@ class NetworkDeploymentEnv(gym.Env):
 
     def step(self, action_index):
         rewards = 0
-        print('current_step', self.current_step)
         done = False
-        node_index = action_index
-        #action_type = action_index % 2  # 0 for deploy, 1 for remove
-        action_desc = "deploying" if node_index <= 24 else "keep unchanged"
-        #print(f"Action: {action_desc} node at position {node_index}")
-        #print('Before action state', self.state["D"])
-        if node_index > 24:
-            rewards += self.keep_node()
-        else:
+        node_index = action_index // 2
+        action_type = action_index % 2  # 0 for deploy, 1 for remove
+
+        action_desc = "deploying" if action_type == 0 else "removing"
+        print(f"Action: {action_desc} node at position {node_index}")
+
+        if node_index in self.permanent_donors and action_type == 1:
+            # Trying to remove a pre-fixed donor node
+            print(f"Attempted to remove a pre-fixed donor at {node_index}. High penalty applied.")
+            rewards = self.calculate_reward() *3
+
+        elif action_type == 0:
             rewards += self.deploy_node(node_index)
-        #self.print_network_status()
-        #print('After action state',self.state["D"])
+
+        else:
+            rewards += self.remove_node(node_index)
+
+        self.print_network_status()
+        total_reward = rewards
         self.current_step += 1
-        #print('step finshed')
 
-        if self.current_step >= max_steps:
-            print(f"reach maximum steps")
-            self.current_step = 0
+        if self.current_step >= self.max_steps:
             done = True
+            self.current_step = 0
 
-        elif env.calculate_coverage_percentage() >= 100:
-            print(f"100% Coverage achieved at step")
-            self.current_step = 0
-            done = True
-        return self._get_flattened_state(), rewards, done
+        return self._get_flattened_state(), total_reward, done, {}
 
     def deploy_node(self, node_index):
-        if self.state["D"][node_index] == 1:
-            self.state["D"][node_index] = 1
+        if self.state["D"][node_index] == 1:  # 如果节点已经被部署
             rewards = self.calculate_reward()
-            #print(f"Node {node_index} is already deployed. ")
-            return rewards
-        else:
-            self.state["D"][node_index] = 1
-            #print(f"Successfully deployed at index {node_index}.")
-            connected = self.reconnect_node(node_index)  # 尝试连接到现有网络
-            if not connected:
-            #print(f"Deployed node {node_index} could not find a node to connect. High penalty applied.")
-                self.state["D"][node_index] = 0
-                rewards = self.calculate_reward()
-                return rewards
-            # return rewards  # 如果没有找到可以连接的节点，返回高惩罚
-            # print(f"Successfully deployed and connected node at index {node_index}.")
-            # rewards = self.calculate_reward()
-            # return rewards  # 无惩罚
-            self.state["D"][node_index] = 1  # 部署节点
-            rewards = self.calculate_reward()
+            print(f"Node {node_index} is already deployed. High penalty applied.")
             return rewards  # 返回高惩罚
+        self.state["D"][node_index] = 1  # 部署节点
+        connected = self.reconnect_node(node_index)  # 尝试连接到现有网络
+        if not connected:
+            print(f"Deployed node {node_index} could not find a node to connect. High penalty applied.")
+            self.state["D"][node_index] = 0
+            rewards = self.calculate_reward()*2
+            return rewards  # 如果没有找到可以连接的节点，返回高惩罚
+        self.state["D"][node_index] = 1
+        rewards = self.calculate_reward()
+        print(f"Successfully deployed and connected node at index {node_index}.")
+        return rewards  # 无惩罚
 
-        #connected = self.reconnect_node(node_index)  # 尝试连接到现有网络
-        #if not connected:
-            #print(f"Deployed node {node_index} could not find a node to connect. High penalty applied.")
-            #self.state["D"][node_index] = 0
-            #rewards = 0
-            #return rewards  # 如果没有找到可以连接的节点，返回高惩罚
-        #print(f"Successfully deployed and connected node at index {node_index}.")
-        #rewards = self.calculate_reward()
-        #return rewards  # 无惩罚
-
-    def keep_node(self):
-        return self.calculate_reward()
+    def remove_node(self, node_index):
+        if self.state["D"][node_index] == 0:  # 如果节点位置上没有节点
+            print(f"No node at position {node_index} to be removed.")
+            rewards = self.calculate_reward()
+            return rewards  # 直接返回，无惩罚
+        self.state["D"][node_index] = 0  # 移除节点
+        # Mark the node for removal
+        nodes_to_remove = [node_index]
+        # Find all nodes connected to this node and mark them for removal as well
+        for i in range(self.n_potential_nodes):
+            if self.state["N"][node_index][i] == 1:
+                if i not in self.permanent_donors:  # Ensure we don't remove donor nodes
+                    nodes_to_remove.append(i)
+        # Remove all marked nodes
+        for idx in nodes_to_remove:
+            self.state["D"][idx] = 0  # Remove the node
+            # Reset connections for the removed node
+            for j in range(self.n_potential_nodes):
+                self.state["N"][idx][j] = 0
+                self.state["R"][idx] = 0
+            rewards = self.calculate_reward()
+            return rewards  # 直接返回，无惩罚
 
     def ensure_network_integrity(self):
         isolated_nodes = [i for i in range(self.n_potential_nodes) if self.state["D"][i] == 1 and not any(self.state["N"][i]) and not any(self.permanent_donors)]
@@ -406,6 +403,7 @@ class NetworkDeploymentEnv(gym.Env):
             self.state["R"][node_index] = self.state["R"][best_target]
             return True
         return False
+
 
     def _get_flattened_state(self):
         # Flatten the state components into a single array
@@ -561,10 +559,10 @@ class NetworkDeploymentEnv(gym.Env):
 
 max_steps = 100
 scale = 100
-numberofdonor = 1
+numberofdonor = 4
 env = NetworkDeploymentEnv()
 state_dim = len(env.reset())
-action_dim = env.action_space
+action_dim = env.action_space.n
 agent = Agent(state_dim, action_dim)
 rewards = train(env, agent, episodes=5000)
 
