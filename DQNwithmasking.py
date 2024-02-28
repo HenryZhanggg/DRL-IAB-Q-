@@ -567,3 +567,30 @@ state_dim = len(env.reset())
 action_dim = env.action_space
 agent = Agent(state_dim, action_dim)
 rewards = train(env, agent, episodes=5000)
+
+import pandas as pd
+import matplotlib.pyplot as plt
+import numpy as np
+
+# Adjust the paths to where you have saved your files
+file_path = 'all_episodes_step_details_20240227-201101.csv'  # Update this to your file path
+df = pd.read_csv(file_path)
+
+final_step_rewards = df.groupby('Episode').last().reset_index()['Reward']
+final_step_rewards_with_episodes = df.groupby('Episode').last().reset_index()[['Episode', 'Reward']]
+reward1 = final_step_rewards_with_episodes['Reward']
+
+scale = 100  # Adjust scale as needed for fewer episodes
+avg_rewards_per_scale_episodes = [np.mean(final_step_rewards_with_episodes['Reward'][i:i+scale]) for i in range(0, len(reward1), scale)]
+episodes_scale = list(range(0, len(reward1), scale))
+
+plt.figure(figsize=(12, 6))
+plt.plot(final_step_rewards_with_episodes['Episode'], final_step_rewards_with_episodes['Reward'], marker='o', linestyle='-', color='blue')
+plt.plot(episodes_scale, avg_rewards_per_scale_episodes, label='Avg Reward per Scale Episodes', color='red', linewidth=2)
+plt.title('Final Step Reward vs. Episode (First 100 Episodes)')
+plt.xlabel('Episode')
+plt.ylabel('Final Step Reward')
+plt.grid(True)
+plt.legend()
+plt.show()
+
