@@ -15,33 +15,36 @@ import numpy as np
 import copy
 import csv
 import datetime
+import time
 
 # Set the device to GPU if available
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 class DQN(nn.Module):
-    def __init__(self, input_shape, n_actions):
+    def __init__(self, input_shape, n_actions, dropout_rate=0.3):
         super(DQN, self).__init__()
         self.conv_layers = nn.Sequential(
-            nn.Conv2d(in_channels=input_shape[0], out_channels=16, kernel_size=5, stride=1, padding=2),
+            nn.Conv2d(in_channels=3, out_channels=32, kernel_size=3, stride=1, padding=1),
             nn.ReLU(),
-            nn.BatchNorm2d(16),
-            nn.Conv2d(in_channels=16, out_channels=32, kernel_size=5, stride=1, padding=2),
-            nn.ReLU(),
-            nn.BatchNorm2d(32),
             nn.MaxPool2d(kernel_size=2, stride=2),
-            nn.Conv2d(in_channels=32, out_channels=64, kernel_size=5, stride=1, padding=2),
+            nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, stride=1, padding=1),
             nn.ReLU(),
-            nn.BatchNorm2d(64),
+            nn.MaxPool2d(kernel_size=2, stride=2),
+            nn.Conv2d(in_channels=64, out_channels=128, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d(kernel_size=2, stride=2),
+            # Further convolutional layers can be added based on computational resources and needs.
         )
-
         self.fc_input_dim = self._get_conv_output(input_shape)
         self.fc_layers = nn.Sequential(
-            nn.Linear(self.fc_input_dim, 256),
+            nn.Linear(self.fc_input_dim, 512),  # Adjusted to handle larger input
             nn.ReLU(),
-            nn.Linear(256, n_actions)
+            nn.Dropout(dropout_rate),
+            nn.Linear(512, 256),
+            nn.ReLU(),
+            nn.Dropout(dropout_rate),
+            nn.Linear(256, n_actions)  # Matches the action space
         )
-
     def _get_conv_output(self, shape):
         with torch.no_grad():
             input = torch.rand(1, *shape)
@@ -51,9 +54,8 @@ class DQN(nn.Module):
     def forward(self, x):
         conv_out = self.conv_layers(x).view(x.size(0), -1)
         return self.fc_layers(conv_out)
-
 class Agent:
-    def __init__(self, state_dim, action_dim, learning_rate=0.01, gamma=0.99, epsilon_start=1.0, epsilon_end=0.01, epsilon_decay=15000):
+    def __init__(self, state_dim, action_dim, learning_rate=0.01, gamma=0.99, epsilon_start=1.0, epsilon_end=0.01, epsilon_decay=250000):
         self.state_dim = state_dim
         self.action_dim = action_dim
         self.model = DQN(state_dim, action_dim).to(device)
@@ -125,6 +127,7 @@ def train(env, agent, episodes, batch_size=512, target_update=512, scale=100):
     all_steps_details = []  # To store details of all steps
 
     for episode in range(episodes):
+        start_time = time.time()
         state = env.reset()
         print("Initial coverage and episode: ", episode, env.calculate_coverage_percentage())
         total_reward = 0
@@ -133,8 +136,12 @@ def train(env, agent, episodes, batch_size=512, target_update=512, scale=100):
         step_count = 0
 
         while not done:
+            action_start_time = time.time()
             action = agent.select_action(state)
+            step_start_time = time.time()
             next_state, reward, done = env.step(action)
+            step_duration = time.time() - step_start_time
+            print(f"Executing step took {step_duration:.4f} seconds.")
             agent.store_transition(state, action, reward, next_state, done)
             loss = agent.experience_replay(batch_size)
             #print('step', step_count)
@@ -169,6 +176,8 @@ def train(env, agent, episodes, batch_size=512, target_update=512, scale=100):
                 print(f"100% Coverage achieved at episode {episode} step {step_count}")
                 # step_count = 0
                 done = True
+        episode_duration = time.time() - start_time
+        print(f"Episode {episode} completed in {episode_duration:.4f} seconds.")
         print('total_loss',total_loss)
         avg_loss = total_loss / step_count #if step_count else 0
         print('avg_loss', avg_loss)
@@ -467,7 +476,7 @@ class NetworkDeploymentEnv(gym.Env):
         for idx in self.donor_indices:
             donor_x, donor_y = self.get_node_position(idx)
             for x in range(donor_x - self.coverage_radius, donor_x + self.coverage_radius + 1):
-                for y in range(donor_y - self.coveragen_radius, donor_y + self.coverage_radius + 1):
+                for y in range(donor_y - self.coverage_radius, donor_y + self.coverage_radius + 1):
                     if 0 <= x < self.grid_size and 0 <= y < self.grid_size:
                         donor_covered_grids.add((x, y))
         self.dor_coverage_cache = donor_covered_grids
@@ -523,4 +532,4 @@ n_potential_nodes_per_row = env.n_potential_nodes_per_row
 state_dim = (3, n_potential_nodes_per_row, n_potential_nodes_per_row)
 action_dim = env.action_space
 agent = Agent(state_dim, action_dim)
-rewards = train(env, agent, episodes=1000)
+rewards = train(env, agent, episodes=20000)
