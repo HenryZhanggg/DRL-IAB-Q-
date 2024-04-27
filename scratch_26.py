@@ -21,29 +21,44 @@ import pickle
 # Set the device to GPU if available
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+
 class DQN(nn.Module):
     def __init__(self, input_shape, n_actions):
         super(DQN, self).__init__()
+        # Ensure the input shape has the format (channels, height, width)
         self.conv_layers = nn.Sequential(
-            nn.Conv2d(in_channels=input_shape[0], out_channels=32, kernel_size=8, stride=4, padding=0),
+            # First convolutional layer with kernel size 8, stride 4, and padding 4
+            nn.Conv2d(in_channels=input_shape[0], out_channels=32, kernel_size=8, stride=4, padding=4),
             nn.ReLU(),
             nn.BatchNorm2d(32),
-            nn.Conv2d(in_channels=32, out_channels=64, kernel_size=4, stride=2, padding=0),
+            # Second convolutional layer with kernel size 4, stride 2, and padding 2
+            nn.Conv2d(in_channels=32, out_channels=64, kernel_size=4, stride=2, padding=2),
             nn.ReLU(),
             nn.BatchNorm2d(64),
-            nn.Conv2d(in_channels=64, out_channels=128, kernel_size=3, stride=1, padding=0),
+            # Third convolutional layer with kernel size 3, stride 1, and padding 1
+            nn.Conv2d(in_channels=64, out_channels=128, kernel_size=3, stride=1, padding=1),
             nn.ReLU(),
             nn.BatchNorm2d(128),
-            nn.AdaptiveAvgPool2d((1,1))  # Global Average Pooling
         )
 
+        self.fc_input_dim = self._get_conv_output(input_shape)
+
+        # Fully connected layers
         self.fc_layers = nn.Sequential(
             nn.Flatten(),
-            nn.Linear(128, 512),
+            nn.Linear(self.fc_input_dim, 512),
             nn.ReLU(),
             nn.Dropout(p=0.5),
             nn.Linear(512, n_actions)
         )
+
+    def _get_conv_output(self, shape):
+        # To determine the size of the flattened feature vector
+        # after the convolutions, perform a dummy forward pass.
+        with torch.no_grad():
+            input = torch.rand(1, *shape)
+            output = self.conv_layers(input)
+            return int(np.prod(output.size()[1:]))
 
     def forward(self, x):
         conv_out = self.conv_layers(x)
