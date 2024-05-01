@@ -307,9 +307,9 @@ class NetworkDeploymentEnv(gym.Env):
 
     def load_precomputed_data(self):
         try:
-            with open('coverage_map.pkl100', 'rb') as f:
+            with open('coverage_map.pkl1002', 'rb') as f:
                 self.coverage_map = pickle.load(f)
-            with open('connections_map.pkl100', 'rb') as f:
+            with open('connections_map.pkl1002', 'rb') as f:
                 self.connections_map = pickle.load(f)
         except FileNotFoundError:
             print("Failed to load the precomputed data files. Please check the files' existence and paths.")
