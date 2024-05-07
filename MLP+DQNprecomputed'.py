@@ -25,20 +25,23 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 class DQN(nn.Module):
     def __init__(self, n_observations, n_actions):
         super(DQN, self).__init__()
-        self.fc1 = nn.Linear(n_observations, 512)
-        self.ln1 = nn.LayerNorm(512)  # Replacing BatchNorm with LayerNorm
-        self.fc2 = nn.Linear(512, 512)
-        self.ln2 = nn.LayerNorm(512)  # Replacing BatchNorm with LayerNorm
-        self.fc3 = nn.Linear(512, 256)
-        self.ln3 = nn.LayerNorm(256)  # Replacing BatchNorm with LayerNorm
-        self.fc4 = nn.Linear(256, n_actions)
+        # Enhanced MLP with additional layers and normalization
+        self.fc1 = nn.Linear(n_observations, 1024)  # Increased from 512 to 1024
+        self.ln1 = nn.LayerNorm(1024)  # Adjusted LayerNorm to new size
+        self.fc2 = nn.Linear(1024, 1024)  # Added another 1024 layer for depth
+        self.ln2 = nn.LayerNorm(1024)
+        self.fc3 = nn.Linear(1024, 512)  # New intermediary layer
+        self.ln3 = nn.LayerNorm(512)
+        self.fc4 = nn.Linear(512, 256)   # Maintaining this layer
+        self.ln4 = nn.LayerNorm(256)
+        self.fc5 = nn.Linear(256, n_actions)  # Final layer outputting actions
 
     def forward(self, x):
         x = F.relu(self.ln1(self.fc1(x)))
         x = F.relu(self.ln2(self.fc2(x)))
         x = F.relu(self.ln3(self.fc3(x)))
-        return self.fc4(x)
-
+        x = F.relu(self.ln4(self.fc4(x)))
+        return self.fc5(x)
 
 class Agent:
     def __init__(self, state_dim, action_dim, learning_rate=0.001, gamma=0.99, epsilon_start=1.0, epsilon_end=0.01, epsilon_decay=250000):
