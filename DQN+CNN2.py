@@ -1,4 +1,4 @@
-#1000*1000 mora complex network/1 meters and deep network size
+# 1000*1000 mora complex network/1 meters and deep network size
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -8,6 +8,7 @@ from collections import deque
 import gym
 from gym import spaces
 import matplotlib
+
 matplotlib.use('Agg')  # Set the backend to 'Agg' to avoid display issues
 import math
 import matplotlib.pyplot as plt
@@ -21,29 +22,53 @@ import pickle
 # Set the device to GPU if available
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+
 class DQN(nn.Module):
-    def __init__(self, input_shape, n_actions, dropout_rate=0.5):
+    def __init__(self, input_shape, n_actions, dropout_rate=0.1):
         super(DQN, self).__init__()
         self.features = nn.Sequential(
-            nn.Conv2d(input_shape[0], 32, kernel_size=5, stride=1, padding=2),
+            # First block
+            nn.Conv2d(input_shape[0], 32, kernel_size=3, stride=1, padding=1),
             nn.ReLU(inplace=True),
-            nn.Conv2d(32, 64, kernel_size=5, stride=1, padding=2),
+            nn.Conv2d(32, 32, kernel_size=3, stride=1, padding=1),
             nn.ReLU(inplace=True),
             nn.MaxPool2d(kernel_size=2, stride=2),
-            nn.Conv2d(64, 64, kernel_size=5, stride=1, padding=2),
+
+            # Second block
+            nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1),
             nn.ReLU(inplace=True),
-            nn.Conv2d(64, 128, kernel_size=5, stride=1, padding=2),
+            nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(kernel_size=2, stride=2),
+
+            # Third block
+            nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(128, 128, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(kernel_size=2, stride=2),
+
+            # Fourth block, added for depth
+            nn.Conv2d(128, 256, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1),
             nn.ReLU(inplace=True),
             nn.MaxPool2d(kernel_size=2, stride=2)
         )
+        self.fc_input_dim = self._get_conv_output(input_shape)
 
-        # Calculate the size of the flattened features after the convolutional layers
-        self.fc_input_dim = self._get_conv_output(input_shape)  # Fixed method call
+        # Expanded fully connected layers
         self.decision_maker = nn.Sequential(
-            nn.Linear(self.fc_input_dim, 512),
-            nn.ReLU(inplace=True),
+            nn.Linear(self.fc_input_dim, 1024),
+            nn.LeakyReLU(0.01),
             nn.Dropout(dropout_rate),
-            nn.Linear(512, n_actions)
+            nn.Linear(1024, 512),
+            nn.LeakyReLU(0.01),
+            nn.Dropout(dropout_rate),
+            nn.Linear(512, 256),
+            nn.LeakyReLU(0.01),
+            nn.Dropout(dropout_rate),
+            nn.Linear(256, n_actions)
         )
 
     def _get_conv_output(self, shape):
@@ -54,12 +79,13 @@ class DQN(nn.Module):
 
     def forward(self, x):
         x = self.features(x)
-        x = x.view(x.size(0), -1)  # Flatten the features
+        x = x.view(x.size(0), -1)
         x = self.decision_maker(x)
         return x
 
 class Agent:
-    def __init__(self, state_dim, action_dim, learning_rate=0.01, gamma=0.99, epsilon_start=1.0, epsilon_end=0.01, epsilon_decay=500000):
+    def __init__(self, state_dim, action_dim, learning_rate=0.01, gamma=0.99, epsilon_start=1.0, epsilon_end=0.01,
+                 epsilon_decay=250000):
         self.state_dim = state_dim
         self.action_dim = action_dim
         self.model = DQN(state_dim, action_dim).to(device)
@@ -69,14 +95,14 @@ class Agent:
         self.epsilon_start = epsilon_start  # Renamed from self.epsilon to self.epsilon_start
         self.epsilon_end = epsilon_end
         self.epsilon_decay = epsilon_decay  # Use this for the decay calculation
-        self.memory = deque(maxlen=200000)
+        self.memory = deque(maxlen=100000)
         self.total_steps = 0
         self.scheduler = optim.lr_scheduler.ExponentialLR(self.optimizer, gamma=0.9995)
-        
 
     def select_action(self, state):
-        print('self.total_steps1',self.total_steps)
-        eps_threshold = self.epsilon_end + (self.epsilon_start - self.epsilon_end) * math.exp(-1. * self.total_steps / self.epsilon_decay)
+        print('self.total_steps1', self.total_steps)
+        eps_threshold = self.epsilon_end + (self.epsilon_start - self.epsilon_end) * math.exp(
+            -1. * self.total_steps / self.epsilon_decay)
         if random.random() < eps_threshold:
             action_index = np.random.randint(self.action_dim)
         else:
@@ -86,15 +112,15 @@ class Agent:
         return action_index
 
     def store_transition(self, state, action, reward, next_state, done):
-        self.memory.append((state, action, reward, next_state,done))
-        #print('self.memory.reward',reward)
+        self.memory.append((state, action, reward, next_state, done))
+        # print('self.memory.reward',reward)
 
     def experience_replay(self, batch_size):
         if len(self.memory) < batch_size:
             return 0
         batch = random.sample(self.memory, batch_size)
         states, actions, rewards, next_states, dones = zip(*batch)
-        #print('batch_siz:rewards',rewards)
+        # print('batch_siz:rewards',rewards)
         states = torch.FloatTensor(np.array(states)).to(device)  # Move to device
         actions = torch.LongTensor(actions).to(device)  # Move to device
         rewards = torch.FloatTensor(rewards).to(device)  # Move to device
@@ -107,10 +133,10 @@ class Agent:
         # Compute the expected Q values
         next_q_values = self.target_model(next_states).max(1)[0].detach()
         expected_q_values = rewards + (self.gamma * next_q_values * (1 - dones))
-        #expected_q_values = rewards + (self.gamma * next_q_values)
+        # expected_q_values = rewards + (self.gamma * next_q_values)
         # Compute loss
         loss = F.mse_loss(current_q_values.squeeze(), expected_q_values)
-        #print("LOSS: ", loss.item())
+        # print("LOSS: ", loss.item())
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
@@ -119,6 +145,7 @@ class Agent:
 
     def update_target_network(self):
         self.target_model.load_state_dict(self.model.state_dict())
+
 
 def train(env, agent, episodes, batch_size=64, target_update=64, scale=100):
     episode_rewards = []
@@ -146,18 +173,18 @@ def train(env, agent, episodes, batch_size=64, target_update=64, scale=100):
             step_start_time = time.time()
             next_state, reward, done = env.step(action)
             step_duration = time.time() - step_start_time
-            #print(f"Executing step took {step_duration:.4f} seconds.")
+            # print(f"Executing step took {step_duration:.4f} seconds.")
             agent.store_transition(state, action, reward, next_state, done)
             loss = agent.experience_replay(batch_size)
-            #print('step', step_count)
+            # print('step', step_count)
             state = next_state
-            #print('state after flattern',state)
+            # print('state after flattern',state)
             total_reward += reward
             total_loss += loss if loss is not None else 0
-            #print("==> tol loss", total_loss)
+            # print("==> tol loss", total_loss)
             step_count += 1
             agent.total_steps += 1
-            step_details ={
+            step_details = {
                 "Episode": episode,
                 "Step": step_count,
                 "Action": action,
@@ -178,30 +205,32 @@ def train(env, agent, episodes, batch_size=64, target_update=64, scale=100):
                 done = True
         episode_duration = time.time() - start_time
         print(f"Episode {episode} completed in {episode_duration:.4f} seconds.")
-        print('total_loss',total_loss)
-        avg_loss = total_loss / step_count #if step_count else 0
+        print('total_loss', total_loss)
+        avg_loss = total_loss / step_count  # if step_count else 0
         print('avg_loss', avg_loss)
-        #print("avg_loss: ", avg_loss,step_count)
+        # print("avg_loss: ", avg_loss,step_count)
         episode_rewards.append(total_reward)
         episode_losses.append(avg_loss)
         deployed_nodes = env.total_deployed_nodes()
-        print('total deployed node in this eposide',env.total_deployed_nodes())
+        print('total deployed node in this eposide', env.total_deployed_nodes())
         coverage_percentage = env.calculate_coverage_percentage()
         data["Episode"].append(episode)
         data["Total Reward"].append(total_reward)
         data["Avg Loss"].append(avg_loss)
-        #print("Avg loss saved: ", data["Avg Loss"])
+        # print("Avg loss saved: ", data["Avg Loss"])
         data["Deployed Nodes"].append(deployed_nodes)
         data["Coverage"].append(coverage_percentage)
         agent.optimizer.step()  # Ensure optimizer step is done if not done inside experience_replay
         agent.scheduler.step()  # Adjust learning rate after optimizer step
 
-
     # Calculating averages per scale of episodes
-    avg_rewards_per_scale_episodes = [np.mean(episode_rewards[i:i+scale]) for i in range(0, len(episode_rewards), scale)]
-    avg_losses_per_scale_episodes = [np.mean(episode_losses[i:i+scale]) for i in range(0, len(episode_losses), scale)]
-    avg_numofnodes_per_scale_episodes = [np.mean(data["Deployed Nodes"][i:i + scale]) for i in range(0, len(data["Deployed Nodes"]), scale)]
-    avg_coverage_per_scale_episodes = [np.mean(data["Coverage"][i:i + scale]) for i in range(0, len(data["Coverage"]), scale)]
+    avg_rewards_per_scale_episodes = [np.mean(episode_rewards[i:i + scale]) for i in
+                                      range(0, len(episode_rewards), scale)]
+    avg_losses_per_scale_episodes = [np.mean(episode_losses[i:i + scale]) for i in range(0, len(episode_losses), scale)]
+    avg_numofnodes_per_scale_episodes = [np.mean(data["Deployed Nodes"][i:i + scale]) for i in
+                                         range(0, len(data["Deployed Nodes"]), scale)]
+    avg_coverage_per_scale_episodes = [np.mean(data["Coverage"][i:i + scale]) for i in
+                                       range(0, len(data["Coverage"]), scale)]
     episodes_scale = list(range(0, len(episode_rewards), scale))
 
     # Writing step details to CSV
@@ -215,7 +244,8 @@ def train(env, agent, episodes, batch_size=64, target_update=64, scale=100):
             writer.writerow(detail)
     plt.figure(figsize=(12, 6))
     plt.plot(episode_rewards, label='Reward per Episode')
-    plt.plot(episodes_scale, avg_rewards_per_scale_episodes, label='Avg Reward per 100 Episodes', color='red', linewidth=2)
+    plt.plot(episodes_scale, avg_rewards_per_scale_episodes, label='Avg Reward per 100 Episodes', color='red',
+             linewidth=2)
     plt.xlabel('Episodes')
     plt.ylabel('Reward')
     plt.title('Episode vs Reward')
@@ -227,11 +257,12 @@ def train(env, agent, episodes, batch_size=64, target_update=64, scale=100):
     plt.legend()
 
     plt.plot(episode_losses, label='Loss per Episode')
-    plt.plot(episodes_scale, avg_losses_per_scale_episodes, label='Avg Loss per 100 Episodes', color='blue', linewidth=2)
+    plt.plot(episodes_scale, avg_losses_per_scale_episodes, label='Avg Loss per 100 Episodes', color='blue',
+             linewidth=2)
     plt.xlabel('Episodes')
     plt.ylabel('Loss')
     plt.title('Episode vs Loss')
-    #plt.savefig('Episode vs Loss for removing all.png')
+    # plt.savefig('Episode vs Loss for removing all.png')
     timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     filename = f'Episode vs Loss for removing all_Time_{timestamp}.png'
     plt.savefig(filename)
@@ -239,7 +270,7 @@ def train(env, agent, episodes, batch_size=64, target_update=64, scale=100):
     plt.legend()
 
     plt.tight_layout()
-    #plt.show()
+    # plt.show()
     plt.figure(figsize=(12, 6))
     plt.subplot(1, 2, 1)
     plt.plot(data["Episode"], data["Deployed Nodes"], label='Deployed Nodes per Episode', color='green', marker='o',
@@ -264,7 +295,7 @@ def train(env, agent, episodes, batch_size=64, target_update=64, scale=100):
     filename = f'Episode vs Coverage Percentage removing all_Time_{timestamp}.png'
     plt.savefig(filename)
     plt.close()  # Close the plot to free memory
-    #plt.show()
+    # plt.show()
     # After the training loop, write data to a CSV file
 
     filename = f'training_data removing all {timestamp}.csv'
@@ -275,9 +306,12 @@ def train(env, agent, episodes, batch_size=64, target_update=64, scale=100):
         writer.writerow(['Episode', 'Total Reward', 'Avg Loss', 'Deployed Nodes', 'Coverage'])
         # Write the data
         for i in range(len(data['Episode'])):
-            writer.writerow([data['Episode'][i], data['Total Reward'][i], data['Avg Loss'][i], data['Deployed Nodes'][i], data['Coverage'][i]])
+            writer.writerow(
+                [data['Episode'][i], data['Total Reward'][i], data['Avg Loss'][i], data['Deployed Nodes'][i],
+                 data['Coverage'][i]])
 
     return episode_rewards, episode_losses
+
 
 class NetworkDeploymentEnv(gym.Env):
     def __init__(self):
@@ -310,6 +344,8 @@ class NetworkDeploymentEnv(gym.Env):
         self.last_reward = None
         self.dor_coverage_cache = None  # Initialize the donor coverage cache
         self.coverage_needs_update = True
+        self.state_min = np.array([0, 0, 0])  # Minimum values for D, R, N channels
+        self.state_max = np.array([1, 15, 10])  # Maximum values for D, R, N channels assuming these maxes
         self.reset()
 
     def reset(self):
@@ -329,6 +365,22 @@ class NetworkDeploymentEnv(gym.Env):
         self.previous_actions = set()
         self.coverage_needs_update = True
         return self._get_cnn_compatible_state()
+
+    def normalize_state(self, state):
+        """ Normalize the given state to the range [0, 1]. """
+        # Reshape state_min and state_max to match the dimensions of the state for broadcasting
+        state_min_reshaped = self.state_min.reshape(3, 1, 1)
+        state_max_reshaped = self.state_max.reshape(3, 1, 1)
+        normalized_state = (state - state_min_reshaped) / (state_max_reshaped - state_min_reshaped)
+        return normalized_state
+
+    def _get_cnn_compatible_state(self):
+        """ Get the current state and normalize it for CNN input. """
+        D_channel = np.expand_dims(self.state["D"], axis=0)
+        R_channel = np.expand_dims(self.state["R"], axis=0)
+        N_channel = np.expand_dims(self.state["N"], axis=0)
+        state = np.concatenate([D_channel, R_channel, N_channel], axis=0)
+        return self.normalize_state(state)
 
     def load_precomputed_data(self):
         try:
@@ -356,8 +408,8 @@ class NetworkDeploymentEnv(gym.Env):
         rewards = 0
         done = False
         node_index = action_index
-        #print(f"Action: {action_desc} node at position {node_index}")
-        #print('Before action state', self.state["D"])
+        # print(f"Action: {action_desc} node at position {node_index}")
+        # print('Before action state', self.state["D"])
         if node_index in self.previous_actions:
             rewards += self.last_reward
         else:
@@ -370,12 +422,12 @@ class NetworkDeploymentEnv(gym.Env):
         self.current_step += 1
         self.coverage_needs_update = False
         if self.current_step >= max_steps:
-            #print(f"reach maximum steps")
+            # print(f"reach maximum steps")
             self.current_step = 0
             self.coverage_needs_update = True
             done = True
         elif env.calculate_coverage_percentage() >= 100:
-            #print(f"100% Coverage achieved at step")
+            # print(f"100% Coverage achieved at step")
             self.current_step = 0
             self.coverage_needs_update = True
             done = True
@@ -394,7 +446,8 @@ class NetworkDeploymentEnv(gym.Env):
         else:
             connected = self.reconnect_node(node_index)  # 尝试连接到现有网络
             if not connected:
-                print(f"Deployed node {[x* self.node_spacing*self.narrow, y* self.node_spacing*self.narrow]} could not find a node to connect. High penalty applied.")
+                print(
+                    f"Deployed node {[x * self.node_spacing * self.narrow, y * self.node_spacing * self.narrow]} could not find a node to connect. High penalty applied.")
                 self.state["D"][x, y] = 0
                 self.update_coverage()
                 print(f"Failed to connect node at index {node_index}.")
@@ -409,7 +462,8 @@ class NetworkDeploymentEnv(gym.Env):
             coverage_increase = coverage_after - coverage_before
             print(f"New coverage: {coverage_increase} additional grids.")
             print('total nodes beforstep_count 64e deployment', self.total_deployed_nodes())
-            print(f"Successfully deployed and connected node at position {[x* self.node_spacing*self.narrow, y* self.node_spacing*self.narrow]}.")
+            print(
+                f"Successfully deployed and connected node at position {[x * self.node_spacing * self.narrow, y * self.node_spacing * self.narrow]}.")
 
             return self.calculate_reward()  # Return rewards considering new coverage
 
@@ -441,13 +495,6 @@ class NetworkDeploymentEnv(gym.Env):
         dy = (y2 - y1) * self.node_spacing * self.narrow
         return math.sqrt(dx ** 2 + dy ** 2)
 
-    def _get_cnn_compatible_state(self):
-        D_channel = np.expand_dims(self.state["D"], axis=0)
-        R_channel = np.expand_dims(self.state["R"], axis=0)
-        N_channel = np.expand_dims(self.state["N"], axis=0)
-        cnn_compatible_state = np.concatenate([D_channel, R_channel, N_channel], axis=0)
-        return cnn_compatible_state
-
     def render(self, mode='human'):
         pass
 
@@ -457,27 +504,27 @@ class NetworkDeploymentEnv(gym.Env):
         return total_deployed_nodes
 
     def calculate_reward(self):
-        alpha = 100 # Penalty for uncovered area
-        #beta = 0.5  # Penalty for each deployed node
+        alpha = 100  # Penalty for uncovered area
+        # beta = 0.5  # Penalty for each deployed node
         beta = 0.5  # Penalty for each deployed node
-        #gamma = 100  # Reward multiplier for coverage
+        # gamma = 100  # Reward multiplier for coverage
 
         total_area = self.grid_size * self.grid_size
-        #covered_addarea = len(self.calculate_addcoverage())
-        #covered_dorarea = len(self.calculate_dorcoverage())
-        #uncovered_area = total_area - covered_addarea - covered_dorarea
+        # covered_addarea = len(self.calculate_addcoverage())
+        # covered_dorarea = len(self.calculate_dorcoverage())
+        # uncovered_area = total_area - covered_addarea - covered_dorarea
         uncovered_area_percent = 100 - env.calculate_coverage_percentage()
         # Calculate penalties and rewards
         uncovered_area_penalty = uncovered_area_percent * alpha
-        #print('uncovered_area_penalty:', uncovered_area_penalty)
-        #print('deployed nodes after this action', self.total_deployed_nodes())
+        # print('uncovered_area_penalty:', uncovered_area_penalty)
+        # print('deployed nodes after this action', self.total_deployed_nodes())
         deployment_penalty = beta * self.total_deployed_nodes()
 
-        #coverage_reward = gamma * (covered_area / total_area)  # Reward based on the percentage of area covered
+        # coverage_reward = gamma * (covered_area / total_area)  # Reward based on the percentage of area covered
         # Final reward is thOld N row e coverage reward minus penalties
-        #reward = (100*env.calculate_coverage_percentage())/self.total_deployed_nodes()
+        # reward = (100*env.calculate_coverage_percentage())/self.total_deployed_nodes()
         reward = -uncovered_area_penalty - deployment_penalty
-        #print('reward:',reward)
+        # print('reward:',reward)
         return reward
 
     def get_node_position(self, node_index):
@@ -491,7 +538,7 @@ class NetworkDeploymentEnv(gym.Env):
         total_covered = np.sum(self.coverage_grid)
         total_area = self.grid_size * self.grid_size
         coverage_percentage = (total_covered / total_area) * 100
-        print('coverage_percentage',coverage_percentage)
+        print('coverage_percentage', coverage_percentage)
         return coverage_percentage
 
     def update_coverage(self):
@@ -500,8 +547,7 @@ class NetworkDeploymentEnv(gym.Env):
             if self.state["D"][node_x, node_y] == 1:
                 for (x, y) in self.coverage_map[node_index]:
                     self.coverage_grid[x, y] = 1
-                print('coverage increase',np.sum(self.coverage_grid))
-
+                print('coverage increase', np.sum(self.coverage_grid))
 
     def print_state_info(self):
         print('Current Step:', self.current_step)
@@ -513,6 +559,7 @@ class NetworkDeploymentEnv(gym.Env):
         print(self.state["N"])
         print('Coverage Percentage:', self.calculate_coverage_percentage())
 
+
 max_steps = 100
 scale = 100
 numberofdonor = 5
@@ -521,4 +568,4 @@ n_potential_nodes_per_row = env.n_potential_nodes_per_row
 state_dim = (3, n_potential_nodes_per_row, n_potential_nodes_per_row)
 action_dim = env.action_space
 agent = Agent(state_dim, action_dim)
-rewards = train(env, agent, episodes=40000)
+rewards = train(env, agent, episodes=20000)
