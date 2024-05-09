@@ -26,43 +26,43 @@ class DQN(nn.Module):
     def __init__(self, input_shape, n_actions, dropout_rate=0.5):
         super(DQN, self).__init__()
         self.features = nn.Sequential(
-            # First block: Large kernels for capturing broad features
-            nn.Conv2d(input_shape[0], 32, kernel_size=7, stride=1, padding=3),
+            # First block: Large kernels for initial broad feature extraction
+            nn.Conv2d(input_shape[0], 32, kernel_size=10, stride=1, padding=5),  # Large kernel with sufficient padding
             nn.ReLU(inplace=True),
             nn.MaxPool2d(kernel_size=2, stride=2),
 
-            # Second block: Medium kernels for intermediate features
-            nn.Conv2d(32, 64, kernel_size=5, stride=1, padding=2),
+            # Second block: Slightly smaller kernel sizes with enough padding
+            nn.Conv2d(32, 64, kernel_size=7, stride=1, padding=3),  # Medium kernel size
             nn.ReLU(inplace=True),
             nn.MaxPool2d(kernel_size=2, stride=2),
 
-            # Third block: Smaller kernels for detailed features
-            nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1),
+            # Third block: Medium-small kernel size to capture fine details
+            nn.Conv2d(64, 128, kernel_size=5, stride=1, padding=2),  # Smaller kernel size
             nn.ReLU(inplace=True),
-            nn.Conv2d(128, 128, kernel_size=3, stride=1, padding=1),
+            nn.Conv2d(128, 128, kernel_size=5, stride=1, padding=2),
             nn.ReLU(inplace=True),
             nn.MaxPool2d(kernel_size=2, stride=2),
 
-            # Fourth block: Even smaller kernels to finalize feature extraction
-            nn.Conv2d(128, 256, kernel_size=2, stride=1, padding=1),
+            # Fourth block: Smallest kernels to finalize feature extraction
+            nn.Conv2d(128, 256, kernel_size=3, stride=1, padding=1),
             nn.ReLU(inplace=True),
-            nn.Conv2d(256, 256, kernel_size=2, stride=1, padding=1),
+            nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1),
             nn.ReLU(inplace=True),
             nn.MaxPool2d(kernel_size=2, stride=2)
         )
         self.fc_input_dim = self._get_conv_output(input_shape)
 
         self.decision_maker = nn.Sequential(
-            nn.Linear(self.fc_input_dim, 2048),
-            nn.LeakyReLU(0.01),
-            nn.Dropout(dropout_rate),
-            nn.Linear(2048, 1024),
+            nn.Linear(self.fc_input_dim, 1024),
             nn.LeakyReLU(0.01),
             nn.Dropout(dropout_rate),
             nn.Linear(1024, 512),
             nn.LeakyReLU(0.01),
             nn.Dropout(dropout_rate),
-            nn.Linear(512, n_actions)
+            nn.Linear(512, 256),
+            nn.LeakyReLU(0.01),
+            nn.Dropout(dropout_rate),
+            nn.Linear(256, n_actions)
         )
 
     def _get_conv_output(self, shape):
@@ -76,7 +76,6 @@ class DQN(nn.Module):
         x = x.view(x.size(0), -1)
         x = self.decision_maker(x)
         return x
-
 
 class Agent:
     def __init__(self, state_dim, action_dim, learning_rate=0.01, gamma=0.99, epsilon_start=1.0, epsilon_end=0.01,
