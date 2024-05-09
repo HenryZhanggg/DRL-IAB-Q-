@@ -90,7 +90,7 @@ class Agent:
         self.epsilon_start = epsilon_start  # Renamed from self.epsilon to self.epsilon_start
         self.epsilon_end = epsilon_end
         self.epsilon_decay = epsilon_decay  # Use this for the decay calculation
-        self.memory = deque(maxlen=80000)
+        self.memory = deque(maxlen=100000)
         self.total_steps = 0
         self.scheduler = optim.lr_scheduler.ExponentialLR(self.optimizer, gamma=0.9995)
 
