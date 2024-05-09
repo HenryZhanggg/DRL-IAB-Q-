@@ -22,53 +22,47 @@ import pickle
 # Set the device to GPU if available
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-
 class DQN(nn.Module):
-    def __init__(self, input_shape, n_actions, dropout_rate=0.1):
+    def __init__(self, input_shape, n_actions, dropout_rate=0.5):
         super(DQN, self).__init__()
         self.features = nn.Sequential(
-            # First block
-            nn.Conv2d(input_shape[0], 32, kernel_size=3, stride=1, padding=1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(32, 32, kernel_size=3, stride=1, padding=1),
+            # First block: Large kernels for capturing broad features
+            nn.Conv2d(input_shape[0], 32, kernel_size=7, stride=1, padding=3),
             nn.ReLU(inplace=True),
             nn.MaxPool2d(kernel_size=2, stride=2),
 
-            # Second block
-            nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=1),
+            # Second block: Medium kernels for intermediate features
+            nn.Conv2d(32, 64, kernel_size=5, stride=1, padding=2),
             nn.ReLU(inplace=True),
             nn.MaxPool2d(kernel_size=2, stride=2),
 
-            # Third block
+            # Third block: Smaller kernels for detailed features
             nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1),
             nn.ReLU(inplace=True),
             nn.Conv2d(128, 128, kernel_size=3, stride=1, padding=1),
             nn.ReLU(inplace=True),
             nn.MaxPool2d(kernel_size=2, stride=2),
 
-            # Fourth block, added for depth
-            nn.Conv2d(128, 256, kernel_size=3, stride=1, padding=1),
+            # Fourth block: Even smaller kernels to finalize feature extraction
+            nn.Conv2d(128, 256, kernel_size=2, stride=1, padding=1),
             nn.ReLU(inplace=True),
-            nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1),
+            nn.Conv2d(256, 256, kernel_size=2, stride=1, padding=1),
             nn.ReLU(inplace=True),
             nn.MaxPool2d(kernel_size=2, stride=2)
         )
         self.fc_input_dim = self._get_conv_output(input_shape)
 
-        # Expanded fully connected layers
         self.decision_maker = nn.Sequential(
-            nn.Linear(self.fc_input_dim, 1024),
+            nn.Linear(self.fc_input_dim, 2048),
+            nn.LeakyReLU(0.01),
+            nn.Dropout(dropout_rate),
+            nn.Linear(2048, 1024),
             nn.LeakyReLU(0.01),
             nn.Dropout(dropout_rate),
             nn.Linear(1024, 512),
             nn.LeakyReLU(0.01),
             nn.Dropout(dropout_rate),
-            nn.Linear(512, 256),
-            nn.LeakyReLU(0.01),
-            nn.Dropout(dropout_rate),
-            nn.Linear(256, n_actions)
+            nn.Linear(512, n_actions)
         )
 
     def _get_conv_output(self, shape):
@@ -83,6 +77,7 @@ class DQN(nn.Module):
         x = self.decision_maker(x)
         return x
 
+
 class Agent:
     def __init__(self, state_dim, action_dim, learning_rate=0.01, gamma=0.99, epsilon_start=1.0, epsilon_end=0.01,
                  epsilon_decay=250000):
@@ -95,7 +90,7 @@ class Agent:
         self.epsilon_start = epsilon_start  # Renamed from self.epsilon to self.epsilon_start
         self.epsilon_end = epsilon_end
         self.epsilon_decay = epsilon_decay  # Use this for the decay calculation
-        self.memory = deque(maxlen=100000)
+        self.memory = deque(maxlen=80000)
         self.total_steps = 0
         self.scheduler = optim.lr_scheduler.ExponentialLR(self.optimizer, gamma=0.9995)
 
