@@ -54,16 +54,16 @@ class DQN(nn.Module):
 
         # Expanded fully connected layers
         self.decision_maker = nn.Sequential(
-            nn.Linear(self.fc_input_dim, 1024),
+            nn.Linear(self.fc_input_dim, 2048),
+            nn.LeakyReLU(0.01),
+            nn.Dropout(dropout_rate),
+            nn.Linear(2048, 1024),
             nn.LeakyReLU(0.01),
             nn.Dropout(dropout_rate),
             nn.Linear(1024, 512),
             nn.LeakyReLU(0.01),
             nn.Dropout(dropout_rate),
-            nn.Linear(512, 256),
-            nn.LeakyReLU(0.01),
-            nn.Dropout(dropout_rate),
-            nn.Linear(256, n_actions)
+            nn.Linear(512, n_actions)
         )
 
     def _get_conv_output(self, shape):
