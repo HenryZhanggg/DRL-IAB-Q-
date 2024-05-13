@@ -80,7 +80,7 @@ class DQN(nn.Module):
 
 class Agent:
     def __init__(self, state_dim, action_dim, learning_rate=0.01, gamma=0.99, epsilon_start=1.0, epsilon_end=0.01,
-                 epsilon_decay=250000):
+                 epsilon_decay=500000):
         self.state_dim = state_dim
         self.action_dim = action_dim
         self.model = DQN(state_dim, action_dim).to(device)
@@ -563,4 +563,4 @@ n_potential_nodes_per_row = env.n_potential_nodes_per_row
 state_dim = (3, n_potential_nodes_per_row, n_potential_nodes_per_row)
 action_dim = env.action_space
 agent = Agent(state_dim, action_dim)
-rewards = train(env, agent, episodes=20000)
+rewards = train(env, agent, episodes=40000)
