@@ -23,27 +23,27 @@ import pickle
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 class DQN(nn.Module):
-    def __init__(self, input_shape, n_actions, dropout_rate=0.5):
+    def __init__(self, input_shape, n_actions, dropout_rate=0.3):
         super(DQN, self).__init__()
         self.features = nn.Sequential(
-            # First block: Large kernels for initial broad feature extraction
-            nn.Conv2d(input_shape[0], 32, kernel_size=10, stride=1, padding=5),  # Large kernel with sufficient padding
+            # First block: Large kernels for capturing broad features
+            nn.Conv2d(input_shape[0], 32, kernel_size=7, stride=1, padding=3),
             nn.ReLU(inplace=True),
             nn.MaxPool2d(kernel_size=2, stride=2),
 
-            # Second block: Slightly smaller kernel sizes with enough padding
-            nn.Conv2d(32, 64, kernel_size=7, stride=1, padding=3),  # Medium kernel size
+            # Second block: Medium kernels for intermediate features
+            nn.Conv2d(32, 64, kernel_size=5, stride=1, padding=2),
             nn.ReLU(inplace=True),
             nn.MaxPool2d(kernel_size=2, stride=2),
 
-            # Third block: Medium-small kernel size to capture fine details
-            nn.Conv2d(64, 128, kernel_size=5, stride=1, padding=2),  # Smaller kernel size
+            # Third block: Smaller kernels for detailed features
+            nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1),
             nn.ReLU(inplace=True),
-            nn.Conv2d(128, 128, kernel_size=5, stride=1, padding=2),
+            nn.Conv2d(128, 128, kernel_size=3, stride=1, padding=1),
             nn.ReLU(inplace=True),
             nn.MaxPool2d(kernel_size=2, stride=2),
 
-            # Fourth block: Smallest kernels to finalize feature extraction
+            # Fourth block: Even smaller kernels to finalize feature extraction
             nn.Conv2d(128, 256, kernel_size=3, stride=1, padding=1),
             nn.ReLU(inplace=True),
             nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1),
@@ -52,6 +52,7 @@ class DQN(nn.Module):
         )
         self.fc_input_dim = self._get_conv_output(input_shape)
 
+        # Expanded fully connected layers
         self.decision_maker = nn.Sequential(
             nn.Linear(self.fc_input_dim, 1024),
             nn.LeakyReLU(0.01),
