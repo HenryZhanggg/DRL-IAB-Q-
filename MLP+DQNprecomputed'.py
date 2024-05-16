@@ -26,15 +26,15 @@ class DQN(nn.Module):
     def __init__(self, n_observations, n_actions):
         super(DQN, self).__init__()
         # Enhanced MLP with additional layers and normalization
-        self.fc1 = nn.Linear(n_observations, 1024)  # Increased from 512 to 1024
-        self.ln1 = nn.LayerNorm(1024)  # Adjusted LayerNorm to new size
-        self.fc2 = nn.Linear(1024, 1024)  # Added another 1024 layer for depth
+        self.fc1 = nn.Linear(n_observations, 2048)  # Increased from 512 to 1024
+        self.ln1 = nn.LayerNorm(2048)  # Adjusted LayerNorm to new size
+        self.fc2 = nn.Linear(2048, 1024)  # Added another 1024 layer for depth
         self.ln2 = nn.LayerNorm(1024)
-        self.fc3 = nn.Linear(1024, 512)  # New intermediary layer
-        self.ln3 = nn.LayerNorm(512)
-        self.fc4 = nn.Linear(512, 256)   # Maintaining this layer
-        self.ln4 = nn.LayerNorm(256)
-        self.fc5 = nn.Linear(256, n_actions)  # Final layer outputting actions
+        self.fc3 = nn.Linear(1024, 1024)  # New intermediary layer
+        self.ln3 = nn.LayerNorm(1024)
+        self.fc4 = nn.Linear(1024, 512)   # Maintaining this layer
+        self.ln4 = nn.LayerNorm(512)
+        self.fc5 = nn.Linear(512, n_actions)  # Final layer outputting actions
 
     def forward(self, x):
         x = F.relu(self.ln1(self.fc1(x)))
@@ -44,7 +44,7 @@ class DQN(nn.Module):
         return self.fc5(x)
 
 class Agent:
-    def __init__(self, state_dim, action_dim, learning_rate=0.001, gamma=0.99, epsilon_start=1.0, epsilon_end=0.01, epsilon_decay=250000):
+    def __init__(self, state_dim, action_dim, learning_rate=0.001, gamma=0.99, epsilon_start=1.0, epsilon_end=0.01, epsilon_decay=500000):
         self.state_dim = state_dim
         self.action_dim = action_dim
         self.model = DQN(state_dim, action_dim).to(device)
@@ -502,4 +502,4 @@ env = NetworkDeploymentEnv()
 state_dim = len(env.reset())
 action_dim = env.action_space
 agent = Agent(state_dim, action_dim)
-rewards = train(env, agent, episodes=20000)
+rewards = train(env, agent, episodes=40000)
