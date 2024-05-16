@@ -26,44 +26,41 @@ class DQN(nn.Module):
     def __init__(self, input_shape, n_actions, dropout_rate=0.3):
         super(DQN, self).__init__()
         self.features = nn.Sequential(
-            # First block: Large kernels for capturing broad features
-            nn.Conv2d(input_shape[0], 32, kernel_size=7, stride=1, padding=3),
+            # First block: Large kernels for initial broad feature extraction
+            nn.Conv2d(input_shape[0], 32, kernel_size=8, stride=1, padding=2),  # Large kernel with sufficient padding
             nn.ReLU(inplace=True),
             nn.MaxPool2d(kernel_size=2, stride=2),
 
-            # Second block: Medium kernels for intermediate features
-            nn.Conv2d(32, 64, kernel_size=5, stride=1, padding=2),
+            # Second block: Slightly smaller kernel sizes with enough padding
+            nn.Conv2d(32, 64, kernel_size=5, stride=1, padding=2),  # Medium kernel size
             nn.ReLU(inplace=True),
             nn.MaxPool2d(kernel_size=2, stride=2),
 
-            # Third block: Smaller kernels for detailed features
-            nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1),
+            # Third block: Medium-small kernel size to capture fine details
+            nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1),  # Smaller kernel size
             nn.ReLU(inplace=True),
-            nn.Conv2d(128, 128, kernel_size=3, stride=1, padding=1),
+            nn.Conv2d(128, 128, kernel_size=3, stride=1, padding=1),  # Smaller kernel size
             nn.ReLU(inplace=True),
             nn.MaxPool2d(kernel_size=2, stride=2),
 
-            # Fourth block: Even smaller kernels to finalize feature extraction
-            nn.Conv2d(128, 256, kernel_size=3, stride=1, padding=1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1),
+            # Fourth block: Smallest kernels to finalize feature extraction
+            nn.Conv2d(128, 256, kernel_size=2, stride=1, padding=1),
             nn.ReLU(inplace=True),
             nn.MaxPool2d(kernel_size=2, stride=2)
         )
         self.fc_input_dim = self._get_conv_output(input_shape)
 
-        # Expanded fully connected layers
         self.decision_maker = nn.Sequential(
-            nn.Linear(self.fc_input_dim, 2048),
-            nn.LeakyReLU(0.01),
-            nn.Dropout(dropout_rate),
-            nn.Linear(2048, 1024),
+            nn.Linear(self.fc_input_dim, 1024),
             nn.LeakyReLU(0.01),
             nn.Dropout(dropout_rate),
             nn.Linear(1024, 512),
             nn.LeakyReLU(0.01),
             nn.Dropout(dropout_rate),
-            nn.Linear(512, n_actions)
+            nn.Linear(512, 256),
+            nn.LeakyReLU(0.01),
+            nn.Dropout(dropout_rate),
+            nn.Linear(256, n_actions)
         )
 
     def _get_conv_output(self, shape):
@@ -80,7 +77,7 @@ class DQN(nn.Module):
 
 class Agent:
     def __init__(self, state_dim, action_dim, learning_rate=0.01, gamma=0.99, epsilon_start=1.0, epsilon_end=0.01,
-                 epsilon_decay=500000):
+                 epsilon_decay=250000):
         self.state_dim = state_dim
         self.action_dim = action_dim
         self.model = DQN(state_dim, action_dim).to(device)
@@ -92,7 +89,6 @@ class Agent:
         self.epsilon_decay = epsilon_decay  # Use this for the decay calculation
         self.memory = deque(maxlen=100000)
         self.total_steps = 0
-        self.scheduler = optim.lr_scheduler.ExponentialLR(self.optimizer, gamma=0.9995)
 
     def select_action(self, state):
         print('self.total_steps1', self.total_steps)
@@ -215,8 +211,6 @@ def train(env, agent, episodes, batch_size=64, target_update=64, scale=100):
         # print("Avg loss saved: ", data["Avg Loss"])
         data["Deployed Nodes"].append(deployed_nodes)
         data["Coverage"].append(coverage_percentage)
-        agent.optimizer.step()  # Ensure optimizer step is done if not done inside experience_replay
-        agent.scheduler.step()  # Adjust learning rate after optimizer step
 
     # Calculating averages per scale of episodes
     avg_rewards_per_scale_episodes = [np.mean(episode_rewards[i:i + scale]) for i in
@@ -563,4 +557,4 @@ n_potential_nodes_per_row = env.n_potential_nodes_per_row
 state_dim = (3, n_potential_nodes_per_row, n_potential_nodes_per_row)
 action_dim = env.action_space
 agent = Agent(state_dim, action_dim)
-rewards = train(env, agent, episodes=40000)
+rewards = train(env, agent, episodes=20000)
