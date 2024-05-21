@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+#SBATCH --job-name=jie-test-CNN-0508               # Job name
+#SBATCH --nodes=1
+#SBATCH --partition=gpuplus               # What partition the job should run on
+#SBATCH --gres=gpu:1
+#SBATCH --time=3-00:00:00               # Time limit (DD-HH:MM:SS)
+#SBATCH --ntasks=1                      # Number of MPI tasks to request
+#SBATCH --cpus-per-task=8               # Number of CPU cores per MPI task
+#SBATCH --mem=256GB                        # Total memory to request
+#SBATCH --account=PET-YORAN-2023       # Project account to use
+#SBATCH --mail-type=BEGIN,END,FAIL            # Mail events (NONE, BEGIN, END, FAIL, ALL)
+#SBATCH --mail-user=qiao.wang@york.ac.uk,jie.zhang@york.ac.uk   # Where to send mail
+#SBATCH --output=%x-%j.log              # Standard output log
+#SBATCH --error=%x-%j.err               # Standard error log
+
+# Abort if any command fails
+set -e
+
+# purge any existing modules
+module purge
+
+# load modules
+module load Miniconda3
+
+# Commands to run
+source activate pytorch-gpu
+python3 /users/qw953/Documents/test-jie/DQN+CNN2.py
